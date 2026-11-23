@@ -17,6 +17,9 @@ import { openDb } from "./db.ts";
 import { startHub } from "./index.ts";
 import { Store } from "./store.ts";
 
+declare const __AGENTFLEET_VERSION__: string | undefined;
+const VERSION = typeof __AGENTFLEET_VERSION__ === "string" ? __AGENTFLEET_VERSION__ : "0.1.0";
+
 const env = process.env;
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -30,6 +33,7 @@ const { positionals, values } = parseArgs({
     "webhook-url": { type: "string", default: env.AGENTFLEET_WEBHOOK_URL || undefined },
     "no-expo-push": { type: "boolean", default: env.AGENTFLEET_EXPO_PUSH === "0" },
     "push-redact": { type: "boolean", default: env.AGENTFLEET_PUSH_REDACT === "1" },
+    version: { type: "boolean", short: "v" },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -37,9 +41,15 @@ const { positionals, values } = parseArgs({
 const cmd = positionals[0] ?? "start";
 const publicUrl = values["public-url"] || `http://${lanAddress()}:${values.port}`;
 
+if (values.version) {
+  console.log(`agentfleet-hub ${VERSION}`);
+  process.exit(0);
+}
+
 if (values.help) {
   console.log(
     [
+      `agentfleet-hub ${VERSION}`,
       "usage: agentfleet-hub [start|pair|join-token] [--port N] [--data DIR] [--name NAME] [--public-url URL]",
       "  notifications: [--ntfy-url https://ntfy.sh/<topic>] [--webhook-url URL] [--no-expo-push] [--push-redact]",
       "  env: AGENTFLEET_NTFY_URL, AGENTFLEET_NTFY_TOKEN, AGENTFLEET_WEBHOOK_URL, AGENTFLEET_EXPO_PUSH=0, AGENTFLEET_PUSH_REDACT=1",

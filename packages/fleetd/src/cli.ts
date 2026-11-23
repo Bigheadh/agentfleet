@@ -25,6 +25,9 @@ import { defaultIdentityPath, loadOrCreateIdentity } from "./identity.ts";
 import { exec } from "./proc.ts";
 import { buildAdapters, probeAll } from "./registry.ts";
 
+declare const __AGENTFLEET_VERSION__: string | undefined;
+const VERSION = typeof __AGENTFLEET_VERSION__ === "string" ? __AGENTFLEET_VERSION__ : "0.1.0";
+
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
@@ -33,6 +36,7 @@ const { positionals, values } = parseArgs({
     label: { type: "string", multiple: true },
     "max-concurrency": { type: "string" },
     base: { type: "string" },
+    version: { type: "boolean", short: "v" },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -40,7 +44,8 @@ const { positionals, values } = parseArgs({
 const configPath = resolve(expandHome(values.config!));
 const [cmd, ...args] = positionals;
 
-const USAGE = `用法:
+const USAGE = `agentfleet-node ${VERSION}
+用法:
   agentfleet-node join <HUB_URL> <JOIN_TOKEN> [--name NAME] [--label L] [--max-concurrency N]
   agentfleet-node project add <NAME> <PATH> [--base REF] | project list | project remove <NAME>
   agentfleet-node key            # 显示本节点 E2EE 公钥、指纹和校验二维码
@@ -53,6 +58,11 @@ const USAGE = `用法:
 function die(msg: string): never {
   console.error(msg);
   process.exit(1);
+}
+
+if (values.version) {
+  console.log(`agentfleet-node ${VERSION}`);
+  process.exit(0);
 }
 
 if (values.help || !cmd) {

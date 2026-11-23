@@ -78,7 +78,7 @@ pnpm test                       # 单元 + 适配器 + 端到端（使用 mock A
 cd apps/mobile && pnpm start    # Expo 开发服务器
 ```
 
-可选：用 Bun 编译单文件二进制 `pnpm --filter @agentfleet/hub build:bin`、`pnpm --filter @agentfleet/fleetd build:bin`。
+单文件二进制一键安装、GitHub Release 发布与手机 App 真机构建（Expo EAS）见 [docs/release.md](docs/release.md)。
 
 ## 已知限制（M1）
 
