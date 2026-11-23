@@ -18,6 +18,7 @@ import {
   type Task,
   TaskConstraints,
 } from "@agentfleet/proto";
+import { buildNotification, type Notifier } from "./notify.ts";
 import { explainNoMatch, queueOrder, rankCandidates } from "./scheduler.ts";
 import { newId, type Store } from "./store.ts";
 
@@ -46,6 +47,8 @@ export interface HubOptions {
   nodeGraceMs?: number;
   maxAttempts?: number;
   actionTimeoutMs?: number;
+  /** Push notifications for approvals and task outcomes. */
+  notifier?: Notifier | null;
 }
 
 interface NodeEntry {
@@ -58,6 +61,9 @@ const TERMINAL_TASK_STATES = new Set<Task["state"]>(["done", "failed", "cancelle
 
 export class Hub {
   readonly name: string;
+  get notifier(): Notifier | null {
+    return this.opts.notifier;
+  }
   private nodes = new Map<string, NodeEntry>();
   private clients = new Set<ClientConn>();
   private pendingActions = new Map<
@@ -70,7 +76,7 @@ export class Hub {
     readonly store: Store,
     opts: HubOptions,
   ) {
-    this.opts = { nodeGraceMs: 60_000, maxAttempts: 3, actionTimeoutMs: 120_000, ...opts };
+    this.opts = { nodeGraceMs: 60_000, maxAttempts: 3, actionTimeoutMs: 120_000, notifier: null, ...opts };
     this.name = opts.name;
     for (const info of store.listNodeInfos()) {
       this.nodes.set(info.id, { info: { ...info, online: false }, conn: null });
@@ -181,7 +187,15 @@ export class Hub {
     const e = env.event;
     if (e.type === "approval.requested") {
       next = { ...next, pendingApprovals: next.pendingApprovals + 1, status: "waiting_approval" };
-      this.updateTask(run.taskId, { state: "waiting_approval" });
+      const task = this.updateTask(run.taskId, { state: "waiting_approval" });
+      if (task && this.opts.notifier) {
+        this.opts.notifier.notify(
+          buildNotification(
+            { kind: "approval", project: task.project, taskTitle: task.title, taskId: task.id, runId: run.id, approvalTitle: e.title, risk: e.risk },
+            this.opts.notifier.redact,
+          ),
+        );
+      }
     } else if (e.type === "approval.resolved") {
       const pending = Math.max(0, next.pendingApprovals - 1);
       next = { ...next, pendingApprovals: pending, status: pending === 0 ? "running" : next.status };
@@ -390,6 +404,14 @@ export class Hub {
     const next = { ...task, ...patch, updatedAt: Date.now() };
     this.store.saveTask(next);
     this.emit({ type: "task", task: next });
+    if (this.opts.notifier && next.state !== task.state && (next.state === "review" || next.state === "failed")) {
+      this.opts.notifier.notify(
+        buildNotification(
+          { kind: next.state, project: next.project, taskTitle: next.title, taskId: next.id, runId: next.runId ?? undefined, note: next.note },
+          this.opts.notifier.redact,
+        ),
+      );
+    }
     return next;
   }
 

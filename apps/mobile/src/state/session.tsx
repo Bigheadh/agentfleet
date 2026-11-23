@@ -8,9 +8,11 @@ import { z } from "zod";
 
 import { HubClient, pairWithHub } from "../api/client";
 import { LiveSocket, type SocketStatus } from "../api/ws";
+import { setPushPref } from "./pushPref";
 import * as storage from "./storage";
 
 const STORAGE_KEY = "agentfleet.session.v1";
+const UNREGISTER_TIMEOUT_MS = 3_000;
 
 const StoredSession = z.object({
   hub: z.string(),
@@ -92,9 +94,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const unpair = useCallback(async () => {
+    // Best effort: stop the hub pushing to this device. Bounded so an
+    // unreachable hub doesn't block unpairing.
+    if (client) {
+      await Promise.race([
+        client.registerPush(null).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, UNREGISTER_TIMEOUT_MS)),
+      ]);
+    }
+    await setPushPref(false);
     await storage.removeItem(STORAGE_KEY);
     setSession(null);
-  }, []);
+  }, [client]);
 
   const value = useMemo<SessionContextValue>(
     () => ({ ready, session, client, socket, socketStatus, pair, unpair }),

@@ -4,6 +4,7 @@
  * error instead of undefined-property crashes deep in the UI.
  */
 import {
+  MeResponse,
   NodeInfo,
   PairResponse,
   Project,
@@ -13,6 +14,7 @@ import {
   TaskDetail,
   EventEnvelope,
   type CreateTaskRequest,
+  type RegisterPushRequest,
   type RunAction,
 } from "@agentfleet/proto";
 import { z } from "zod";
@@ -150,6 +152,14 @@ export class HubClient {
   }
   runAction(runId: string, action: RunAction): Promise<RunActionResponse> {
     return this.post(`/api/runs/${encodeURIComponent(runId)}/actions`, RunActionResponse, { action });
+  }
+  me(): Promise<MeResponse> {
+    return this.get("/api/me", MeResponse);
+  }
+  /** Register this device's Expo push token, or clear it with null. */
+  registerPush(expoPushToken: string | null): Promise<unknown> {
+    const body: RegisterPushRequest = { expoPushToken };
+    return this.post("/api/devices/me/push", Ok, body);
   }
 }
 

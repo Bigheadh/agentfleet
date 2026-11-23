@@ -22,6 +22,13 @@ CREATE TABLE IF NOT EXISTS audit (ts INTEGER NOT NULL, actor TEXT NOT NULL, acti
 export class Store {
   constructor(private db: Db) {
     db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  /** Additive, idempotent migrations for hub.db files created by older versions. */
+  private migrate() {
+    const cols = new Set(this.db.all<{ name: string }>("PRAGMA table_info(devices)").map((c) => c.name));
+    if (!cols.has("push_token")) this.db.exec("ALTER TABLE devices ADD COLUMN push_token TEXT");
   }
 
   // ---- devices & pairing -------------------------------------------------
@@ -53,6 +60,27 @@ export class Store {
 
   revokeDevice(id: string) {
     this.db.run("DELETE FROM devices WHERE id = ?", id);
+  }
+
+  // ---- push tokens -----------------------------------------------------------
+  setPushToken(deviceId: string, token: string | null) {
+    // A token belongs to one physical install: if it moved to a re-paired device, drop the stale owner.
+    if (token) this.db.run("UPDATE devices SET push_token = NULL WHERE push_token = ? AND id != ?", token, deviceId);
+    this.db.run("UPDATE devices SET push_token = ? WHERE id = ?", token, deviceId);
+  }
+
+  pushToken(deviceId: string): string | null {
+    return this.db.get<{ push_token: string | null }>("SELECT push_token FROM devices WHERE id = ?", deviceId)?.push_token ?? null;
+  }
+
+  pushTargets(): { deviceId: string; token: string }[] {
+    return this.db
+      .all<{ id: string; push_token: string }>("SELECT id, push_token FROM devices WHERE push_token IS NOT NULL")
+      .map((r) => ({ deviceId: r.id, token: r.push_token }));
+  }
+
+  clearPushToken(token: string) {
+    this.db.run("UPDATE devices SET push_token = NULL WHERE push_token = ?", token);
   }
 
   // ---- nodes ---------------------------------------------------------------

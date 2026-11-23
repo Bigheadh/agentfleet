@@ -43,6 +43,13 @@
       ],
       "expo-secure-store",
       [
+        "expo-notifications",
+        {
+          "defaultChannel": "agentfleet",
+          "enableBackgroundRemoteNotifications": false
+        }
+      ],
+      [
         "expo-local-authentication",
         {
           "faceIDPermission": "AgentFleet 使用 Face ID 确认高风险操作的审批。"

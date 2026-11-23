@@ -3,6 +3,7 @@
  * agentfleet-hub CLI
  *
  *   agentfleet-hub start [--port 8787] [--data ~/.agentfleet/hub] [--name "My Hub"] [--public-url http://host:8787]
+ *                        [--ntfy-url https://ntfy.sh/<topic>] [--webhook-url URL] [--no-expo-push] [--push-redact]
  *   agentfleet-hub pair       [--data ...] [--public-url ...]   # print a phone pairing QR code
  *   agentfleet-hub join-token [--data ...] [--public-url ...]   # print a node join command
  */
@@ -16,14 +17,19 @@ import { openDb } from "./db.ts";
 import { startHub } from "./index.ts";
 import { Store } from "./store.ts";
 
+const env = process.env;
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
-    port: { type: "string", default: process.env.AGENTFLEET_PORT ?? "8787" },
+    port: { type: "string", default: env.AGENTFLEET_PORT ?? "8787" },
     host: { type: "string", default: "0.0.0.0" },
-    data: { type: "string", default: process.env.AGENTFLEET_HUB_DATA ?? join(homedir(), ".agentfleet", "hub") },
-    name: { type: "string", default: process.env.AGENTFLEET_HUB_NAME ?? "AgentFleet Hub" },
-    "public-url": { type: "string", default: process.env.AGENTFLEET_PUBLIC_URL },
+    data: { type: "string", default: env.AGENTFLEET_HUB_DATA ?? join(homedir(), ".agentfleet", "hub") },
+    name: { type: "string", default: env.AGENTFLEET_HUB_NAME ?? "AgentFleet Hub" },
+    "public-url": { type: "string", default: env.AGENTFLEET_PUBLIC_URL },
+    "ntfy-url": { type: "string", default: env.AGENTFLEET_NTFY_URL },
+    "webhook-url": { type: "string", default: env.AGENTFLEET_WEBHOOK_URL },
+    "no-expo-push": { type: "boolean", default: env.AGENTFLEET_EXPO_PUSH === "0" },
+    "push-redact": { type: "boolean", default: env.AGENTFLEET_PUSH_REDACT === "1" },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -32,14 +38,34 @@ const cmd = positionals[0] ?? "start";
 const publicUrl = values["public-url"] ?? `http://${lanAddress()}:${values.port}`;
 
 if (values.help) {
-  console.log("usage: agentfleet-hub [start|pair|join-token] [--port N] [--data DIR] [--name NAME] [--public-url URL]");
+  console.log(
+    [
+      "usage: agentfleet-hub [start|pair|join-token] [--port N] [--data DIR] [--name NAME] [--public-url URL]",
+      "  notifications: [--ntfy-url https://ntfy.sh/<topic>] [--webhook-url URL] [--no-expo-push] [--push-redact]",
+      "  env: AGENTFLEET_NTFY_URL, AGENTFLEET_NTFY_TOKEN, AGENTFLEET_WEBHOOK_URL, AGENTFLEET_EXPO_PUSH=0, AGENTFLEET_PUSH_REDACT=1",
+    ].join("\n"),
+  );
   process.exit(0);
 }
 
 if (cmd === "start") {
-  const h = await startHub({ port: Number(values.port), host: values.host, dataDir: values.data!, name: values.name });
+  const h = await startHub({
+    port: Number(values.port),
+    host: values.host,
+    dataDir: values.data!,
+    name: values.name,
+    notify: {
+      expo: !values["no-expo-push"],
+      ntfyUrl: values["ntfy-url"],
+      ntfyToken: env.AGENTFLEET_NTFY_TOKEN,
+      webhookUrl: values["webhook-url"],
+      redact: values["push-redact"],
+    },
+  });
   console.log(`[hub] "${h.hub.name}" listening on :${h.port}  (data: ${values.data})`);
   console.log(`[hub] public URL: ${publicUrl}`);
+  const channels = [...(h.notifier?.expoEnabled ? ["expo"] : []), ...(h.notifier?.channels() ?? [])];
+  console.log(`[hub] 推送通道: ${channels.join(", ") || "无"}${values["push-redact"] ? "（隐藏详情）" : ""}`);
   if (h.store.countDevices() === 0) {
     console.log("[hub] 还没有配对的手机，扫描下方二维码配对：");
     printPairing(h.store, values.name!);

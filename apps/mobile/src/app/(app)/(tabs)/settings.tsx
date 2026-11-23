@@ -1,6 +1,7 @@
 import Constants from "expo-constants";
 import { ScrollView, StyleSheet, View } from "react-native";
 
+import { PushSettings } from "@/components/PushSettings";
 import { Button, Card, Dot, Row, SectionTitle, Txt } from "@/components/ui";
 import { t } from "@/i18n/strings";
 import { confirmAsync } from "@/lib/dialog";
@@ -23,7 +24,7 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
 
 export default function SettingsScreen() {
   const c = useColors();
-  const { session, socketStatus } = usePaired();
+  const { session, client, socketStatus } = usePaired();
   const { unpair } = useSession();
   const statusColor = socketStatus === "open" ? c.success : socketStatus === "connecting" ? c.warning : c.danger;
 
@@ -51,6 +52,8 @@ export default function SettingsScreen() {
           </Row>
         </View>
       </Card>
+
+      <PushSettings client={client} />
 
       <SectionTitle>{t.appName}</SectionTitle>
       <Card style={{ paddingVertical: 4 }}>

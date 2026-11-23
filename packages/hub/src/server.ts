@@ -4,8 +4,10 @@ import {
   ApprovalDecisionRequest,
   ClientToHub,
   InputRequest,
+  type MeResponse,
   NodeToHub,
   PairRequest,
+  RegisterPushRequest,
   RunActionRequest,
 } from "@agentfleet/proto";
 import { WebSocket, WebSocketServer } from "ws";
@@ -21,6 +23,8 @@ interface Route {
 }
 
 const MAX_BODY = 1024 * 1024;
+const EXPO_TOKEN_RE = /^Expo(nent)?PushToken\[[^\]]+\]$/;
+const deviceIdOf = (actor: string) => actor.replace(/^device:/, "");
 
 export function createHubServer(hub: Hub): Server {
   const routes: Route[] = [];
@@ -45,7 +49,23 @@ export function createHubServer(hub: Hub): Server {
   });
 
   // ---- device-authenticated ----------------------------------------------------
-  route("GET", "/api/me", "device", ({ actor }) => ({ actor, hubName: hub.name }));
+  route("GET", "/api/me", "device", ({ actor }): MeResponse => ({
+    actor,
+    hubName: hub.name,
+    push: {
+      expoEnabled: hub.notifier?.expoEnabled ?? false,
+      registered: hub.store.pushToken(deviceIdOf(actor)) !== null,
+      channels: hub.notifier?.channels() ?? [],
+    },
+  }));
+  route("POST", "/api/devices/me/push", "device", ({ body, actor }) => {
+    const { expoPushToken } = RegisterPushRequest.parse(body);
+    if (expoPushToken !== null && !EXPO_TOKEN_RE.test(expoPushToken)) throw new HubError(400, "不是有效的 Expo push token");
+    if (expoPushToken !== null && !hub.notifier?.expoEnabled) throw new HubError(409, "hub 未启用 Expo 推送");
+    hub.store.setPushToken(deviceIdOf(actor), expoPushToken);
+    hub.store.audit(actor, expoPushToken ? "push.register" : "push.unregister");
+    return { ok: true };
+  });
   route("GET", "/api/nodes", "device", () => hub.nodeInfos());
   route("POST", "/api/nodes/join-token", "device", ({ actor }) => {
     const token = hub.store.createJoinToken();

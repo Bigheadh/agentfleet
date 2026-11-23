@@ -45,6 +45,34 @@ export type RunActionResponse = z.infer<typeof RunActionResponse>;
 
 export const JoinTokenResponse = z.object({ token: z.string(), command: z.string() });
 
+// ---- push notifications ---------------------------------------------------------
+
+/** `POST /api/devices/me/push` — register (or clear with null) this device's Expo push token. */
+export const RegisterPushRequest = z.object({ expoPushToken: z.string().min(1).max(256).nullable() });
+export type RegisterPushRequest = z.infer<typeof RegisterPushRequest>;
+
+/** `GET /api/me` */
+export const MeResponse = z.object({
+  actor: z.string(),
+  hubName: z.string(),
+  push: z.object({
+    /** Hub forwards notifications to Expo's push service (can be disabled by the hub operator). */
+    expoEnabled: z.boolean(),
+    /** This device has a push token registered. */
+    registered: z.boolean(),
+    /** Other channels configured on the hub, e.g. ["ntfy", "webhook"]. */
+    channels: z.array(z.string()),
+  }),
+});
+export type MeResponse = z.infer<typeof MeResponse>;
+
+export const NotificationKind = z.enum(["approval", "review", "failed"]);
+export type NotificationKind = z.infer<typeof NotificationKind>;
+
+/** `data` attached to every push notification, used by the app to deep-link to the task. */
+export const PushData = z.object({ kind: NotificationKind, taskId: z.string(), runId: z.string().optional() });
+export type PushData = z.infer<typeof PushData>;
+
 export const ClientToHub = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subscribe"), runId: z.string(), after: z.number().int().default(-1) }),
   z.object({ type: z.literal("unsubscribe"), runId: z.string() }),

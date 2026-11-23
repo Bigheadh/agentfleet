@@ -1,5 +1,7 @@
 # AgentFleet
 
+[![CI](https://github.com/Bigheadh/agentfleet/actions/workflows/ci.yml/badge.svg)](https://github.com/Bigheadh/agentfleet/actions/workflows/ci.yml)
+
 > 用手机调度多台机器上的 coding agent —— 开源、自托管、多 agent。
 > A self-hosted mobile control plane for coding agents running on your own machines.
 
@@ -81,7 +83,7 @@ cd apps/mobile && pnpm start    # Expo 开发服务器
 ## 已知限制（M1）
 
 - **传输安全**：M1 依赖 HTTPS/WSS（请把 hub 放在 TLS 反向代理、Tailscale 或局域网后面）。端到端加密（扫码 Noise 握手，hub 只转发密文）在路线图中。
-- **推送通知**：尚未实现（自托管推送网关在路线图中）；App 在前台时通过 WebSocket 实时更新。
+- **推送通知**：已支持 Expo 推送 / ntfy（可自托管）/ Webhook，审批请求、任务待审阅、任务失败时推送，可隐藏详情，见 [docs/notifications.md](docs/notifications.md)。
 - **真实 agent**：已用真实 Codex 0.171 / Gemini CLI 0.70 / Claude Code（claude-agent-acp 0.23）通过 OpenAI 兼容中转跑通完整链路（派发 → 手机审批 → diff → 提交）；单元测试仍使用 mock agent。
 - 单 hub、单用户；尚无多用户 / 团队权限。
 
