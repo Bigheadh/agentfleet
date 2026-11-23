@@ -1,12 +1,21 @@
-import type { Priority, Project } from "@agentfleet/proto";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import {
+  ENCRYPTED_PLACEHOLDER,
+  ENCRYPTED_TASK_TITLE,
+  encryptTaskPayload,
+  type Priority,
+  type Project,
+} from "@agentfleet/proto";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, View } from "react-native";
 
 import { errorMessage } from "@/api/client";
-import { Button, Chip, ErrorBanner, Loading, Row, SectionTitle, Txt } from "@/components/ui";
+import { Button, Card, Chip, ErrorBanner, Loading, Row, SectionTitle, Txt } from "@/components/ui";
 import { t } from "@/i18n/strings";
+import { selectE2EERecipients } from "@/lib/e2eePure";
 import { collectRuntimes, type RuntimeChoice } from "@/lib/format";
+import { useE2EE } from "@/state/e2ee";
 import { useFleet } from "@/state/fleet";
 import { usePaired } from "@/state/session";
 import { useColors } from "@/theme";
@@ -23,6 +32,7 @@ function runtimeSublabel(rt: RuntimeChoice): string {
 export default function NewTaskScreen() {
   const c = useColors();
   const { client } = usePaired();
+  const { keyPair, enabled: e2eeEnabled, trustedNodes, devicePublicKeys } = useE2EE();
   const { projects, nodes, refreshProjects, refreshNodes, upsertTask } = useFleet();
   const [project, setProject] = useState<string | null>(null);
   const [agent, setAgent] = useState<string>("any");
@@ -47,6 +57,11 @@ export default function NewTaskScreen() {
     [projects.data, project],
   );
   const runtimes = useMemo(() => collectRuntimes(nodes.data, selectedProject), [nodes.data, selectedProject]);
+  const recipients = useMemo(
+    () => selectE2EERecipients(nodes.data, selectedProject, trustedNodes, devicePublicKeys),
+    [nodes.data, selectedProject, trustedNodes, devicePublicKeys],
+  );
+  const willEncrypt = e2eeEnabled && !!keyPair && recipients.trustedNodes.length > 0;
 
   // Reset the agent if it became unavailable for the chosen project.
   useEffect(() => {
@@ -59,13 +74,25 @@ export default function NewTaskScreen() {
     setError(null);
     setBusy(true);
     try {
-      const task = await client.createTask({
-        project,
-        prompt: prompt.trim(),
-        title: title.trim() || undefined,
-        priority,
-        constraints: { agent },
-      });
+      const cleanPrompt = prompt.trim();
+      const cleanTitle = title.trim() || cleanPrompt.split("\n")[0]!.slice(0, 80);
+      const req = willEncrypt
+        ? {
+            project,
+            title: ENCRYPTED_TASK_TITLE,
+            prompt: ENCRYPTED_PLACEHOLDER,
+            priority,
+            constraints: { agent },
+            e2ee: encryptTaskPayload({ title: cleanTitle, prompt: cleanPrompt }, keyPair!, recipients.recipientKeys, project).e2ee,
+          }
+        : {
+            project,
+            prompt: cleanPrompt,
+            title: title.trim() || undefined,
+            priority,
+            constraints: { agent },
+          };
+      const task = await client.createTask(req);
       upsertTask(task);
       router.replace(`/tasks/${task.id}`);
     } catch (e) {
@@ -84,6 +111,33 @@ export default function NewTaskScreen() {
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         {error ? <ErrorBanner message={error} /> : null}
         {projects.error ? <ErrorBanner message={projects.error} onRetry={() => void refreshProjects()} /> : null}
+
+        <Card style={{ marginBottom: 10 }}>
+          <Row gap={8}>
+            <Ionicons
+              name={willEncrypt ? "shield-checkmark" : "lock-open-outline"}
+              size={18}
+              color={willEncrypt ? c.success : e2eeEnabled ? c.warning : c.textMuted}
+            />
+            <Txt size={13} style={{ flex: 1 }} color={willEncrypt ? c.success : c.textMuted}>
+              {!e2eeEnabled
+                ? t.e2ee.newTaskPlain
+                : willEncrypt
+                  ? t.e2ee.newTaskReady(recipients.trustedNodes.length)
+                  : t.e2ee.newTaskNeedTrust}
+            </Txt>
+          </Row>
+          {recipients.mismatchNodes.length > 0 ? (
+            <Txt size={12} color={c.danger} style={{ marginTop: 6 }}>
+              {t.e2ee.newTaskMismatchWarn(recipients.mismatchNodes.length)}
+            </Txt>
+          ) : null}
+          {e2eeEnabled && !willEncrypt ? (
+            <View style={{ marginTop: 8 }}>
+              <Button title={t.e2ee.goVerifyNodes} variant="secondary" onPress={() => router.replace("/nodes")} />
+            </View>
+          ) : null}
+        </Card>
 
         <SectionTitle>{t.newTask.project}</SectionTitle>
         {projects.data.length === 0 ? (

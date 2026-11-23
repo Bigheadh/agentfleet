@@ -14,8 +14,10 @@ import {
   TaskDetail,
   EventEnvelope,
   type CreateTaskRequest,
+  type RegisterKeyRequest,
   type RegisterPushRequest,
   type RunAction,
+  type SealedBox,
 } from "@agentfleet/proto";
 import { z } from "zod";
 
@@ -93,8 +95,8 @@ async function request<S extends z.ZodType>(
 }
 
 /** Unauthenticated pairing call: exchanges the one-time code for a device token. */
-export function pairWithHub(hub: string, code: string, deviceName: string): Promise<PairResponse> {
-  return request(hub, "POST", "/api/pair", PairResponse, { body: { code, deviceName } });
+export function pairWithHub(hub: string, code: string, deviceName: string, publicKey?: string): Promise<PairResponse> {
+  return request(hub, "POST", "/api/pair", PairResponse, { body: { code, deviceName, ...(publicKey ? { publicKey } : {}) } });
 }
 
 export class HubClient {
@@ -137,15 +139,14 @@ export class HubClient {
   getRunEvents(id: string, after = -1): Promise<EventEnvelope[]> {
     return this.get(`/api/runs/${encodeURIComponent(id)}/events?after=${after}`, z.array(EventEnvelope));
   }
-  sendInput(runId: string, text: string): Promise<unknown> {
-    return this.post(`/api/runs/${encodeURIComponent(runId)}/input`, Ok, { text });
+  sendInput(runId: string, text: string, e2ee?: SealedBox): Promise<unknown> {
+    return this.post(`/api/runs/${encodeURIComponent(runId)}/input`, Ok, { text, ...(e2ee ? { e2ee } : {}) });
   }
-  decideApproval(runId: string, approvalId: string, optionId: string): Promise<unknown> {
-    return this.post(
-      `/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`,
-      Ok,
-      { optionId },
-    );
+  decideApproval(runId: string, approvalId: string, optionId: string, e2ee?: SealedBox): Promise<unknown> {
+    return this.post(`/api/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`, Ok, {
+      optionId,
+      ...(e2ee ? { e2ee } : {}),
+    });
   }
   interrupt(runId: string): Promise<unknown> {
     return this.post(`/api/runs/${encodeURIComponent(runId)}/interrupt`, Ok);
@@ -155,6 +156,11 @@ export class HubClient {
   }
   me(): Promise<MeResponse> {
     return this.get("/api/me", MeResponse);
+  }
+  /** Register this device's X25519 public key for E2EE. */
+  registerKey(publicKey: string): Promise<unknown> {
+    const body: RegisterKeyRequest = { publicKey };
+    return this.post("/api/devices/me/key", Ok, body);
   }
   /** Register this device's Expo push token, or clear it with null. */
   registerPush(expoPushToken: string | null): Promise<unknown> {

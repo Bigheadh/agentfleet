@@ -1,9 +1,11 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import type { Task } from "@agentfleet/proto";
 import { memo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { t } from "../i18n/strings";
 import { agentLabel, timeAgo } from "../lib/format";
+import { useE2EE } from "../state/e2ee";
 import { taskStateColor, useColors } from "../theme";
 import { Badge, Row, Txt } from "./ui";
 
@@ -14,7 +16,10 @@ export function TaskStateBadge({ state }: { state: Task["state"] }) {
 
 export const TaskRow = memo(function TaskRow({ task, onPress }: { task: Task; onPress: () => void }) {
   const c = useColors();
-  const waiting = task.state === "waiting_approval";
+  const { decryptTask } = useE2EE();
+  const dec = decryptTask(task);
+  const shown = dec.task;
+  const waiting = shown.state === "waiting_approval";
   return (
     <Pressable
       onPress={onPress}
@@ -26,16 +31,25 @@ export const TaskRow = memo(function TaskRow({ task, onPress }: { task: Task; on
     >
       <Row style={{ alignItems: "flex-start" }}>
         <View style={{ flex: 1 }}>
-          <Txt weight="600" numberOfLines={2}>
-            {task.title || task.prompt}
-          </Txt>
+          <Row gap={5} style={{ alignItems: "center" }}>
+            {dec.encrypted ? (
+              <Ionicons
+                name={dec.locked ? "lock-closed" : "shield-checkmark"}
+                size={14}
+                color={dec.locked ? c.warning : c.success}
+              />
+            ) : null}
+            <Txt weight="600" numberOfLines={2} style={{ flex: 1 }}>
+              {shown.title || shown.prompt}
+            </Txt>
+          </Row>
           <Txt muted size={13} style={{ marginTop: 4 }} numberOfLines={1}>
-            {task.project} · {agentLabel(task.constraints.agent)} · {timeAgo(task.updatedAt)}
+            {shown.project} · {agentLabel(shown.constraints.agent)} · {timeAgo(shown.updatedAt)}
           </Txt>
         </View>
         <View style={{ alignItems: "flex-end", gap: 6 }}>
-          <TaskStateBadge state={task.state} />
-          {task.priority === "high" ? (
+          <TaskStateBadge state={shown.state} />
+          {shown.priority === "high" ? (
             <Txt size={12} color={c.danger}>
               {t.priority.high}
             </Txt>

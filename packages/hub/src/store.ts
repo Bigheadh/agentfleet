@@ -29,6 +29,7 @@ export class Store {
   private migrate() {
     const cols = new Set(this.db.all<{ name: string }>("PRAGMA table_info(devices)").map((c) => c.name));
     if (!cols.has("push_token")) this.db.exec("ALTER TABLE devices ADD COLUMN push_token TEXT");
+    if (!cols.has("public_key")) this.db.exec("ALTER TABLE devices ADD COLUMN public_key TEXT");
   }
 
   // ---- devices & pairing -------------------------------------------------
@@ -39,13 +40,20 @@ export class Store {
   }
 
   /** Consumes a one-time pairing code and registers a device. Returns null if invalid/expired. */
-  pairDevice(code: string, name: string): { id: string; token: string } | null {
+  pairDevice(code: string, name: string, publicKey?: string): { id: string; token: string } | null {
     const row = this.db.get<{ expires_at: number }>("SELECT expires_at FROM pairing_codes WHERE code = ?", code.toUpperCase());
     this.db.run("DELETE FROM pairing_codes WHERE code = ? OR expires_at < ?", code.toUpperCase(), Date.now());
     if (!row || row.expires_at < Date.now()) return null;
     const id = newId();
     const token = newToken("afd");
-    this.db.run("INSERT INTO devices (id, name, token_hash, created_at) VALUES (?, ?, ?, ?)", id, name, sha256(token), Date.now());
+    this.db.run(
+      "INSERT INTO devices (id, name, token_hash, created_at, public_key) VALUES (?, ?, ?, ?, ?)",
+      id,
+      name,
+      sha256(token),
+      Date.now(),
+      publicKey ?? null,
+    );
     this.audit(`device:${id}`, "pair", name);
     return { id, token };
   }
@@ -60,6 +68,23 @@ export class Store {
 
   revokeDevice(id: string) {
     this.db.run("DELETE FROM devices WHERE id = ?", id);
+  }
+
+  // ---- device E2EE public keys -----------------------------------------------
+  setDevicePublicKey(deviceId: string, publicKey: string) {
+    this.db.run("UPDATE devices SET public_key = ? WHERE id = ?", publicKey, deviceId);
+  }
+
+  devicePublicKey(deviceId: string): string | null {
+    return this.db.get<{ public_key: string | null }>("SELECT public_key FROM devices WHERE id = ?", deviceId)?.public_key ?? null;
+  }
+
+  allDevicePublicKeys(): string[] {
+    return [
+      ...new Set(
+        this.db.all<{ public_key: string }>("SELECT public_key FROM devices WHERE public_key IS NOT NULL").map((r) => r.public_key),
+      ),
+    ];
   }
 
   // ---- push tokens -----------------------------------------------------------

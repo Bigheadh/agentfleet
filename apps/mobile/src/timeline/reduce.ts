@@ -284,6 +284,9 @@ export function applyEvents(state: TimelineState, envelopes: readonly EventEnvel
       case "log":
         push({ kind: "log", id, level: ev.level, text: ev.text, ts: env.ts });
         break;
+      case "encrypted":
+        push({ kind: "log", id, level: "warn", text: "端到端加密事件尚未解密", ts: env.ts });
+        break;
       default: {
         // Exhaustiveness guard: new FleetEvent types are ignored at runtime.
         const _never: never = ev;

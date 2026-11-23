@@ -31,6 +31,16 @@ export const ProjectConfig = z.object({
   baseRef: z.string().optional(),
 });
 
+export const E2EEConfig = z.object({
+  /** "optional" accepts both encrypted and plaintext tasks; "required" refuses plaintext tasks. */
+  mode: z.enum(["optional", "required"]).default("optional"),
+  /** Custom path to this node's X25519 identity keypair JSON (mode 0600). */
+  keyPath: z.string().optional(),
+  /** Optional allowlist of trusted device X25519 public keys (base64). Empty = allow any device key. */
+  trustedDevices: z.array(z.string()).default([]),
+});
+export type E2EEConfig = z.infer<typeof E2EEConfig>;
+
 export const NodeConfig = z.object({
   hub: z.string().url(),
   nodeId: z.string(),
@@ -42,6 +52,7 @@ export const NodeConfig = z.object({
   projects: z.record(z.string(), ProjectConfig).default({}),
   agents: z.record(z.string(), AgentOverride).default({}),
   policy: PolicyConfig.prefault({}),
+  e2ee: E2EEConfig.prefault({}),
   /** Keep an agent session alive this long after a turn for follow-up prompts. */
   idleSessionMinutes: z.number().positive().default(30),
 });
@@ -53,6 +64,7 @@ export function loadConfig(path = DEFAULT_CONFIG_PATH): NodeConfig {
   const cfg = NodeConfig.parse(raw);
   for (const p of Object.values(cfg.projects)) p.path = resolve(expandHome(p.path));
   cfg.workRoot = resolve(expandHome(cfg.workRoot));
+  if (cfg.e2ee.keyPath) cfg.e2ee.keyPath = resolve(expandHome(cfg.e2ee.keyPath));
   return cfg;
 }
 

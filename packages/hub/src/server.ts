@@ -4,9 +4,11 @@ import {
   ApprovalDecisionRequest,
   ClientToHub,
   InputRequest,
+  isValidPublicKey,
   type MeResponse,
   NodeToHub,
   PairRequest,
+  RegisterKeyRequest,
   RegisterPushRequest,
   RunActionRequest,
 } from "@agentfleet/proto";
@@ -36,8 +38,9 @@ export function createHubServer(hub: Hub): Server {
   // ---- public ---------------------------------------------------------------
   route("GET", "/healthz", "none", () => ({ ok: true, name: hub.name }));
   route("POST", "/api/pair", "none", ({ body }) => {
-    const { code, deviceName } = PairRequest.parse(body);
-    const r = hub.store.pairDevice(code, deviceName);
+    const { code, deviceName, publicKey } = PairRequest.parse(body);
+    if (publicKey && !isValidPublicKey(publicKey)) throw new HubError(400, "无效的 X25519 公钥");
+    const r = hub.store.pairDevice(code, deviceName, publicKey);
     if (!r) throw new HubError(401, "配对码无效或已过期");
     return { token: r.token, deviceId: r.id, hubName: hub.name };
   });
@@ -57,7 +60,18 @@ export function createHubServer(hub: Hub): Server {
       registered: hub.store.pushToken(deviceIdOf(actor)) !== null,
       channels: hub.notifier?.channels() ?? [],
     },
+    e2ee: {
+      publicKey: hub.store.devicePublicKey(deviceIdOf(actor)),
+      devicePublicKeys: hub.store.allDevicePublicKeys(),
+    },
   }));
+  route("POST", "/api/devices/me/key", "device", ({ body, actor }) => {
+    const { publicKey } = RegisterKeyRequest.parse(body);
+    if (!isValidPublicKey(publicKey)) throw new HubError(400, "无效的 X25519 公钥");
+    hub.store.setDevicePublicKey(deviceIdOf(actor), publicKey);
+    hub.store.audit(actor, "e2ee.key");
+    return { ok: true };
+  });
   route("POST", "/api/devices/me/push", "device", ({ body, actor }) => {
     const { expoPushToken } = RegisterPushRequest.parse(body);
     if (expoPushToken !== null && !EXPO_TOKEN_RE.test(expoPushToken)) throw new HubError(400, "不是有效的 Expo push token");
@@ -92,11 +106,13 @@ export function createHubServer(hub: Hub): Server {
     return hub.store.eventsAfter(params[0]!, Number.isFinite(after) ? after : -1);
   });
   route("POST", "/api/runs/:id/input", "device", ({ params, body, actor }) => {
-    hub.sendInput(params[0]!, InputRequest.parse(body).text, actor);
+    const { text, e2ee } = InputRequest.parse(body);
+    hub.sendInput(params[0]!, text, actor, e2ee);
     return { ok: true };
   });
   route("POST", "/api/runs/:id/approvals/:approvalId", "device", ({ params, body, actor }) => {
-    hub.resolveApproval(params[0]!, decodeURIComponent(params[1]!), ApprovalDecisionRequest.parse(body).optionId, actor);
+    const { optionId, e2ee } = ApprovalDecisionRequest.parse(body);
+    hub.resolveApproval(params[0]!, decodeURIComponent(params[1]!), optionId, actor, e2ee);
     return { ok: true };
   });
   route("POST", "/api/runs/:id/interrupt", "device", ({ params, actor }) => {

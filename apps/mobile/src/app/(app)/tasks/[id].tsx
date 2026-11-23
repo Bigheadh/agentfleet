@@ -1,5 +1,14 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import type { Run, RunAction, RunStatus, Task, TaskDetail } from "@agentfleet/proto";
+import {
+  ENCRYPTED_PLACEHOLDER,
+  encryptApproval,
+  encryptInput,
+  type Run,
+  type RunAction,
+  type RunStatus,
+  type Task,
+  type TaskDetail,
+} from "@agentfleet/proto";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,6 +34,7 @@ import { PlanChecklist, TimelineItemView, UsageChip } from "@/components/Timelin
 import { Badge, Button, Card, Chip, EmptyState, ErrorBanner, Loading, Row, Txt } from "@/components/ui";
 import { t } from "@/i18n/strings";
 import { alertMessage, confirmAsync, confirmDanger } from "@/lib/dialog";
+import { useE2EE } from "@/state/e2ee";
 import { useFleet } from "@/state/fleet";
 import { usePaired } from "@/state/session";
 import { pendingApprovals, type ApprovalItem, type TimelineItem } from "@/timeline/reduce";
@@ -43,6 +53,7 @@ export default function TaskDetailScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const { client, socket } = usePaired();
+  const { decryptTask } = useE2EE();
   const { nodeById, upsertTask } = useFleet();
 
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -91,7 +102,10 @@ export default function TaskDetailScreen() {
     [socket, id, load],
   );
 
-  const task = detail?.task ?? null;
+  const rawTask = detail?.task ?? null;
+  const decrypted = useMemo(() => (rawTask ? decryptTask(rawTask) : null), [rawTask, decryptTask]);
+  const task = decrypted?.task ?? null;
+  const dek = decrypted?.dek ?? null;
   const runs = useMemo(() => (detail ? detail.runs.slice().sort((a, b) => a.startedAt - b.startedAt) : []), [detail]);
 
   // Follow the latest run (task.runId) unless the user picked an older attempt.
@@ -119,6 +133,7 @@ export default function TaskDetailScreen() {
     client,
     socket,
     selectedRunId,
+    dek,
   );
 
   const node = run ? nodeById(run.nodeId) : undefined;
@@ -142,14 +157,18 @@ export default function TaskDetailScreen() {
       const allowing = option?.kind.startsWith("allow") ?? false;
       if (item.risk === "danger" && allowing && !(await confirmDanger(item.title))) return false;
       try {
-        await client.decideApproval(run.id, item.approvalId, optionId);
+        if (dek) {
+          await client.decideApproval(run.id, item.approvalId, ENCRYPTED_PLACEHOLDER, encryptApproval(dek, run.id, item.approvalId, optionId));
+        } else {
+          await client.decideApproval(run.id, item.approvalId, optionId);
+        }
         return true;
       } catch (e) {
         alertMessage(t.common.error, errorMessage(e));
         return false;
       }
     },
-    [client, run],
+    [client, run, dek],
   );
 
   // --- auto-scroll: stick to the bottom while the user is near it ---------
@@ -169,7 +188,7 @@ export default function TaskDetailScreen() {
     if (index >= 0) listRef.current?.scrollToIndex({ index, viewPosition: 0.1, animated: true });
   };
 
-  if (!detail) {
+  if (!detail || !task) {
     return (
       <View style={{ flex: 1, backgroundColor: c.bg, padding: 16 }}>
         <Stack.Screen options={{ title: t.detail.title }} />
@@ -177,11 +196,12 @@ export default function TaskDetailScreen() {
       </View>
     );
   }
-  const theTask = detail.task;
+  const theTask = task;
 
   const header = (
     <View>
       {loadError ? <ErrorBanner message={loadError} onRetry={() => void load()} /> : null}
+      {decrypted?.locked ? <ErrorBanner message={t.e2ee.lockedBanner} /> : null}
       <Card style={{ marginBottom: 10 }}>
         <Row style={{ alignItems: "flex-start" }}>
           <Txt weight="700" size={17} style={{ flex: 1 }} selectable>
@@ -204,6 +224,9 @@ export default function TaskDetailScreen() {
           {run?.branch ? <Meta label={t.detail.branch} value={run.branch} mono /> : null}
         </View>
         <Row style={{ marginTop: 8, flexWrap: "wrap" }}>
+          {decrypted?.encrypted ? (
+            <Badge label={decrypted.locked ? t.e2ee.lockedBadge : t.e2ee.badge} color={decrypted.locked ? c.warning : c.success} />
+          ) : null}
           {run ? <Badge label={t.runStatus[run.status]} color={runStatusColor(c, run.status)} /> : null}
           {timeline.usage ? <UsageChip usage={timeline.usage} /> : null}
         </Row>
@@ -307,6 +330,8 @@ export default function TaskDetailScreen() {
       <BottomBar
         task={theTask}
         run={run}
+        dek={dek}
+        locked={decrypted?.locked ?? false}
         isLatest={isLatest}
         runActive={runActive}
         multiTurn={multiTurn}
@@ -351,6 +376,8 @@ function SegmentButton({ label, active, onPress }: { label: string; active: bool
 function BottomBar({
   task,
   run,
+  dek,
+  locked,
   isLatest,
   runActive,
   multiTurn,
@@ -360,6 +387,8 @@ function BottomBar({
 }: {
   task: Task;
   run: Run | null;
+  dek: Uint8Array | null;
+  locked: boolean;
   isLatest: boolean;
   runActive: boolean;
   multiTurn: boolean;
@@ -386,9 +415,13 @@ function BottomBar({
 
   const send = () => {
     const body = text.trim();
-    if (!run || !body) return;
+    if (!run || !body || locked) return;
     void guard("send", async () => {
-      await client.sendInput(run.id, body);
+      if (dek) {
+        await client.sendInput(run.id, ENCRYPTED_PLACEHOLDER, encryptInput(dek, run.id, body));
+      } else {
+        await client.sendInput(run.id, body);
+      }
       setText("");
     });
   };

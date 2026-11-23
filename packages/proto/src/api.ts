@@ -6,7 +6,8 @@
  * Native's WebSocket cannot reliably set headers).
  */
 import { z } from "zod";
-import { EventEnvelope } from "./events.ts";
+import { TaskE2EE } from "./e2ee.ts";
+import { EventEnvelope, SealedBox } from "./events.ts";
 import { NodeInfo, Priority, Run, RunAction, Task, TaskConstraints } from "./models.ts";
 
 /** Encoded in the pairing QR code shown by `hub pair`. */
@@ -18,7 +19,12 @@ export const PairingPayload = z.object({
 });
 export type PairingPayload = z.infer<typeof PairingPayload>;
 
-export const PairRequest = z.object({ code: z.string(), deviceName: z.string().min(1).max(64) });
+export const PairRequest = z.object({
+  code: z.string(),
+  deviceName: z.string().min(1).max(64),
+  /** Optional X25519 public key (base64) for end-to-end encryption. */
+  publicKey: z.string().min(1).max(128).optional(),
+});
 export const PairResponse = z.object({ token: z.string(), deviceId: z.string(), hubName: z.string() });
 export type PairResponse = z.infer<typeof PairResponse>;
 
@@ -28,6 +34,8 @@ export const CreateTaskRequest = z.object({
   title: z.string().optional(),
   priority: Priority.default("normal"),
   constraints: TaskConstraints.partial().default({}),
+  /** End-to-end encrypted task payload; when set, `title` and `prompt` hold placeholders. */
+  e2ee: TaskE2EE.optional(),
 });
 export type CreateTaskRequest = z.input<typeof CreateTaskRequest>;
 
@@ -37,19 +45,23 @@ export type TaskDetail = z.infer<typeof TaskDetail>;
 export const Project = z.object({ id: z.string(), nodes: z.array(z.string()) });
 export type Project = z.infer<typeof Project>;
 
-export const InputRequest = z.object({ text: z.string().min(1) });
-export const ApprovalDecisionRequest = z.object({ optionId: z.string() });
+export const InputRequest = z.object({ text: z.string().min(1), e2ee: SealedBox.optional() });
+export const ApprovalDecisionRequest = z.object({ optionId: z.string(), e2ee: SealedBox.optional() });
 export const RunActionRequest = z.object({ action: RunAction });
 export const RunActionResponse = z.object({ ok: z.boolean(), output: z.string(), url: z.string().optional() });
 export type RunActionResponse = z.infer<typeof RunActionResponse>;
 
 export const JoinTokenResponse = z.object({ token: z.string(), command: z.string() });
 
-// ---- push notifications ---------------------------------------------------------
+// ---- push notifications & E2EE device keys ----------------------------------
 
 /** `POST /api/devices/me/push` — register (or clear with null) this device's Expo push token. */
 export const RegisterPushRequest = z.object({ expoPushToken: z.string().min(1).max(256).nullable() });
 export type RegisterPushRequest = z.infer<typeof RegisterPushRequest>;
+
+/** `POST /api/devices/me/key` — register or rotate this device's X25519 public key. */
+export const RegisterKeyRequest = z.object({ publicKey: z.string().min(1).max(128) });
+export type RegisterKeyRequest = z.infer<typeof RegisterKeyRequest>;
 
 /** `GET /api/me` */
 export const MeResponse = z.object({
@@ -63,6 +75,14 @@ export const MeResponse = z.object({
     /** Other channels configured on the hub, e.g. ["ntfy", "webhook"]. */
     channels: z.array(z.string()),
   }),
+  e2ee: z
+    .object({
+      /** This device's registered X25519 public key, if any. */
+      publicKey: z.string().nullable(),
+      /** Public keys of all paired devices on this hub (so multi-device users can read their own tasks). */
+      devicePublicKeys: z.array(z.string()),
+    })
+    .optional(),
 });
 export type MeResponse = z.infer<typeof MeResponse>;
 

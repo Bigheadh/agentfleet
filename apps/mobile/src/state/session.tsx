@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { HubClient, pairWithHub } from "../api/client";
 import { LiveSocket, type SocketStatus } from "../api/ws";
+import { loadOrCreateDeviceKeyPair } from "./e2ee";
 import { setPushPref } from "./pushPref";
 import * as storage from "./storage";
 
@@ -79,7 +80,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [socket]);
 
   const pair = useCallback(async (hub: string, code: string, deviceName: string) => {
-    const res = await pairWithHub(hub, code.trim(), deviceName.trim());
+    const kp = await loadOrCreateDeviceKeyPair().catch(() => null);
+    const res = await pairWithHub(hub, code.trim(), deviceName.trim(), kp?.publicKey);
     const s: Session = {
       hub,
       token: res.token,

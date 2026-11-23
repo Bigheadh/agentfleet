@@ -66,6 +66,17 @@ export const RunStatus = z.enum([
 ]);
 export type RunStatus = z.infer<typeof RunStatus>;
 
+export const SealedBox = z.object({
+  /** 24-byte random XChaCha20-Poly1305 nonce, base64. */
+  n: z.string().min(1),
+  /** Ciphertext + 16-byte Poly1305 tag, base64. */
+  c: z.string().min(1),
+});
+export type SealedBox = z.infer<typeof SealedBox>;
+
+export const EncryptedEventHint = z.enum(["approval.requested", "approval.resolved", "run.status", "other"]);
+export type EncryptedEventHint = z.infer<typeof EncryptedEventHint>;
+
 export const FleetEvent = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message.delta"), role: z.enum(["agent", "user"]), text: z.string() }),
   z.object({ type: z.literal("reasoning.delta"), text: z.string() }),
@@ -121,6 +132,13 @@ export const FleetEvent = z.discriminatedUnion("type", [
   z.object({ type: z.literal("diff.updated"), unified: z.string(), files: z.number(), additions: z.number(), deletions: z.number() }),
   z.object({ type: z.literal("run.status"), status: RunStatus, detail: z.string().optional() }),
   z.object({ type: z.literal("log"), level: z.enum(["debug", "info", "warn", "error"]), text: z.string() }),
+  /** End-to-end encrypted FleetEvent; hub sees only the minimal routing hint. */
+  z.object({
+    type: z.literal("encrypted"),
+    hint: EncryptedEventHint.default("other"),
+    status: RunStatus.optional(),
+    box: SealedBox,
+  }),
 ]);
 export type FleetEvent = z.infer<typeof FleetEvent>;
 export type FleetEventType = FleetEvent["type"];

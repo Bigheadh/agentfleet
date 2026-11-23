@@ -2,7 +2,7 @@
  * Capability-aware scheduler (design doc §6.2): filter (node, runtime) pairs,
  * then score. Pure functions — no I/O — so they're easy to test and tune.
  */
-import { TIER_SCORE, type Capability, type NodeInfo, type Task } from "@agentfleet/proto";
+import { keyId, TIER_SCORE, type Capability, type NodeInfo, type Task } from "@agentfleet/proto";
 
 export interface Candidate {
   node: NodeInfo;
@@ -30,6 +30,17 @@ export function isUsable(rt: Capability): boolean {
   return rt.installed && rt.loggedIn !== false;
 }
 
+function nodeCanDecrypt(task: Task, node: NodeInfo): boolean {
+  if (!task.e2ee) return true;
+  if (!node.publicKey) return false;
+  try {
+    const kid = keyId(node.publicKey);
+    return task.e2ee.keys.some((k) => k.kid === kid);
+  } catch {
+    return false;
+  }
+}
+
 export function rankCandidates(task: Task, nodes: NodeInfo[], ctx: ScheduleContext = {}): Candidate[] {
   const c = task.constraints;
   const out: Candidate[] = [];
@@ -37,6 +48,7 @@ export function rankCandidates(task: Task, nodes: NodeInfo[], ctx: ScheduleConte
     if (!node.online || node.running >= node.maxConcurrency) continue;
     if (c.nodeId && c.nodeId !== node.id) continue;
     if (!node.projects.includes(task.project)) continue;
+    if (!nodeCanDecrypt(task, node)) continue;
     if (!c.labels.every((l) => node.labels.includes(l))) continue;
     for (const rt of node.runtimes) {
       if (!isUsable(rt) || !runtimeMatches(c.agent, rt.id)) continue;
@@ -67,7 +79,9 @@ export function explainNoMatch(task: Task, nodes: NodeInfo[]): string {
   if (online.length === 0) return "所有节点离线";
   const withProject = online.filter((n) => n.projects.includes(task.project));
   if (withProject.length === 0) return `没有节点配置了项目 "${task.project}"`;
-  const free = withProject.filter((n) => n.running < n.maxConcurrency);
+  const decryptable = withProject.filter((n) => nodeCanDecrypt(task, n));
+  if (decryptable.length === 0) return "没有持有此加密任务密钥的在线节点";
+  const free = decryptable.filter((n) => n.running < n.maxConcurrency);
   if (free.length === 0) return "节点并发已满，排队中";
   const rts = free.flatMap((n) => n.runtimes).filter((r) => runtimeMatches(task.constraints.agent, r.id));
   if (rts.length === 0) return `没有匹配的 agent: ${JSON.stringify(task.constraints.agent)}`;

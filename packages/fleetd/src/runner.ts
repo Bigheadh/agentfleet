@@ -10,7 +10,22 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ApprovalOption, FleetEvent, NodeToHub, RunAction, RunSpec, RunStatus } from "@agentfleet/proto";
+import {
+  decryptApproval,
+  decryptInput,
+  decryptTaskPayload,
+  encryptEvent,
+  fromBase64,
+  toBase64,
+  type ApprovalOption,
+  type FleetEvent,
+  type KeyPair,
+  type NodeToHub,
+  type RunAction,
+  type RunSpec,
+  type RunStatus,
+  type SealedBox,
+} from "@agentfleet/proto";
 import type { AgentAdapter, AgentSession, ApprovalRequest, TurnResult } from "./adapters/types.ts";
 import type { NodeConfig } from "./config.ts";
 import { Policy, optionFor } from "./policy.ts";
@@ -22,6 +37,12 @@ interface RunMeta {
   repoPath: string;
   wt: Worktree;
   seq: number;
+  /** Base64 32-byte task DEK when the run is end-to-end encrypted. */
+  e2eeDek?: string;
+  /** Decrypted task title for commit messages / PR titles. */
+  e2eeTitle?: string;
+  /** Seen input message ids to reject hub replays on encrypted runs. */
+  seenInputIds?: string[];
 }
 
 interface PendingApproval {
@@ -59,6 +80,8 @@ export interface RunnerOptions {
   send: (msg: NodeToHub) => void;
   /** Path of the persisted run metadata file. */
   statePath: string;
+  /** Node's X25519 identity keypair for decrypting E2EE tasks. */
+  identity?: KeyPair;
   log?: (level: "debug" | "info" | "warn" | "error", text: string) => void;
 }
 
@@ -99,46 +122,114 @@ export class Runner {
     const project = this.opts.cfg.projects[spec.project];
     if (!project) return fail(`本节点未配置项目 "${spec.project}"（agentfleet-node project add）`);
 
+    const e2eeCfg = this.opts.cfg.e2ee;
+    let localSpec = spec;
+    let e2eeDek: string | undefined;
+    let e2eeTitle: string | undefined;
+    if (spec.e2ee) {
+      if (!this.opts.identity) return fail("节点未配置端到端加密密钥");
+      if (e2eeCfg.trustedDevices.length > 0 && !e2eeCfg.trustedDevices.includes(spec.e2ee.spk)) {
+        return fail("发送方设备公钥未在节点信任列表中");
+      }
+      try {
+        const dec = decryptTaskPayload(spec.e2ee, this.opts.identity, spec.project);
+        e2eeDek = toBase64(dec.dek);
+        e2eeTitle = dec.title;
+        localSpec = { ...spec, prompt: dec.prompt, e2ee: undefined };
+      } catch (err) {
+        return fail(`解密端到端加密任务失败: ${(err as Error).message}`);
+      }
+    } else if (e2eeCfg.mode === "required") {
+      return fail("本节点要求端到端加密，拒绝明文任务");
+    }
+
     let wt: Worktree;
     try {
       wt = await this.worktrees.create(project.path, spec.project, spec.runId, project.baseRef);
     } catch (err) {
       return fail(`创建 worktree 失败: ${(err as Error).message}`);
     }
-    const meta: RunMeta = { spec, repoPath: project.path, wt, seq: 0 };
+    const meta: RunMeta = {
+      spec: localSpec,
+      repoPath: project.path,
+      wt,
+      seq: 0,
+      ...(e2eeDek ? { e2eeDek, e2eeTitle, seenInputIds: [] } : {}),
+    };
     this.metas[spec.runId] = meta;
     this.persist();
     const st = this.newState(meta);
     st.ended = false;
     this.runs.set(spec.runId, st);
     this.opts.send({ type: "run.started", runId: spec.runId, branch: wt.branch, worktree: wt.path });
-    this.emit(st, { type: "run.status", status: "starting", detail: `${spec.runtimeId} @ ${wt.branch}` });
-    st.queue.push(spec.prompt);
+    this.emit(st, { type: "run.status", status: "starting", detail: `${localSpec.runtimeId} @ ${wt.branch}` });
+    st.queue.push(localSpec.prompt);
     void this.pump(st);
   }
 
-  input(runId: string, text: string) {
+  input(runId: string, text: string, e2ee?: SealedBox) {
     const st = this.stateFor(runId);
     if (!st) {
       this.log("warn", `input for unknown run ${runId}`);
       return;
     }
-    st.queue.push(text);
+    let plain = text;
+    if (st.meta.e2eeDek) {
+      if (!e2ee) {
+        this.log("warn", `rejected unencrypted input for E2EE run ${runId}`);
+        return;
+      }
+      try {
+        const dec = decryptInput(fromBase64(st.meta.e2eeDek), runId, e2ee);
+        const seen = (st.meta.seenInputIds ??= []);
+        if (seen.includes(dec.msgId)) {
+          this.log("warn", `rejected replayed input ${dec.msgId} for run ${runId}`);
+          return;
+        }
+        seen.push(dec.msgId);
+        if (seen.length > 500) seen.splice(0, seen.length - 500);
+        this.persist();
+        plain = dec.text;
+      } catch (err) {
+        this.log("warn", `rejected invalid E2EE input for run ${runId}: ${(err as Error).message}`);
+        return;
+      }
+    } else if (this.opts.cfg.e2ee.mode === "required") {
+      this.log("warn", `rejected plaintext input in E2EE required mode for run ${runId}`);
+      return;
+    }
+    st.queue.push(plain);
     void this.pump(st);
   }
 
-  approval(runId: string, approvalId: string, optionId: string) {
+  approval(runId: string, approvalId: string, optionId: string, e2ee?: SealedBox) {
     const st = this.runs.get(runId);
     const p = st?.approvals.get(approvalId);
     if (!st || !p) return;
-    if (!p.options.some((o) => o.id === optionId)) {
-      this.emit(st, { type: "log", level: "warn", text: `无效的审批选项 ${optionId}` });
+    let resolvedOption = optionId;
+    if (st.meta.e2eeDek) {
+      if (!e2ee) {
+        this.log("warn", `rejected unencrypted approval for E2EE run ${runId}`);
+        return;
+      }
+      try {
+        resolvedOption = decryptApproval(fromBase64(st.meta.e2eeDek), runId, approvalId, e2ee);
+      } catch (err) {
+        this.log("warn", `rejected invalid E2EE approval for run ${runId}/${approvalId}: ${(err as Error).message}`);
+        return;
+      }
+    } else if (this.opts.cfg.e2ee.mode === "required") {
+      this.log("warn", `rejected plaintext approval in E2EE required mode for run ${runId}`);
+      return;
+    }
+    if (!p.options.some((o) => o.id === resolvedOption)) {
+      this.emit(st, { type: "log", level: "warn", text: `无效的审批选项 ${resolvedOption}` });
       return;
     }
     clearTimeout(p.timer);
     st.approvals.delete(approvalId);
-    this.emit(st, { type: "approval.resolved", approvalId, optionId, by: "user" });
-    p.resolve(optionId);
+    this.emit(st, { type: "approval.resolved", approvalId, optionId: resolvedOption, by: "user" });
+    p.resolve(resolvedOption);
   }
 
   async interrupt(runId: string) {
@@ -157,7 +248,7 @@ export class Runner {
     if (!meta) return reply(false, "本节点没有该运行的记录（worktree 可能已被删除）");
     const st = this.runs.get(runId);
     if (st?.turnActive) return reply(false, "agent 仍在运行，请先等待完成或中断");
-    const title = firstLine(meta.spec.prompt);
+    const title = meta.e2eeTitle?.trim() || firstLine(meta.spec.prompt);
     try {
       switch (action) {
         case "commit": {
@@ -291,7 +382,8 @@ export class Runner {
     st.ended = true;
     st.queue.length = 0;
     this.persist();
-    this.opts.send({ type: "run.ended", runId, status, error });
+    const wireError = error && st.meta.e2eeDek ? "任务执行失败（详情已端到端加密）" : error;
+    this.opts.send({ type: "run.ended", runId, status, error: wireError });
     if (status === "completed") {
       // Keep the agent warm for follow-ups, then free resources.
       st.idleTimer = setTimeout(() => void this.closeSession(st), this.opts.cfg.idleSessionMinutes * 60_000);
@@ -406,7 +498,8 @@ export class Runner {
 
   private sendEvent(meta: RunMeta, event: FleetEvent) {
     const seq = meta.seq++;
-    this.opts.send({ type: "run.event", runId: meta.spec.runId, seq, ts: Date.now(), event });
+    const wireEvent = meta.e2eeDek ? encryptEvent(fromBase64(meta.e2eeDek), meta.spec.runId, seq, event) : event;
+    this.opts.send({ type: "run.event", runId: meta.spec.runId, seq, ts: Date.now(), event: wireEvent });
   }
 
   private persist() {

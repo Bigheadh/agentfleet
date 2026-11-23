@@ -1,10 +1,11 @@
 /** fleetd daemon: wires adapters + runner + hub connection together. */
 import { platform, release } from "node:os";
 import { join } from "node:path";
-import { type Capability, type HubToNode, PROTOCOL_VERSION } from "@agentfleet/proto";
+import { type Capability, type HubToNode, keyFingerprint, type KeyPair, PROTOCOL_VERSION } from "@agentfleet/proto";
 import type { AgentAdapter } from "./adapters/types.ts";
 import { AGENTFLEET_HOME, type NodeConfig } from "./config.ts";
 import { HubClient } from "./hubClient.ts";
+import { defaultIdentityPath, loadOrCreateIdentity } from "./identity.ts";
 import { buildAdapters, probeAll } from "./registry.ts";
 import { Runner } from "./runner.ts";
 
@@ -12,6 +13,10 @@ export interface DaemonOptions {
   cfg: NodeConfig;
   /** Defaults to ~/.agentfleet/state/runs-<nodeId>.json */
   statePath?: string;
+  /** Override node E2EE keypair path (defaults to cfg.e2ee.keyPath or ~/.agentfleet/state/identity-<nodeId>.key). */
+  identityPath?: string;
+  /** Override node E2EE keypair directly (tests). */
+  identity?: KeyPair;
   /** Override adapters (tests). */
   adapters?: Map<string, AgentAdapter>;
   reprobeMs?: number;
@@ -21,6 +26,7 @@ export interface DaemonOptions {
 export interface Daemon {
   runner: Runner;
   client: HubClient;
+  publicKey: string;
   capabilities(): Capability[];
   stop(): Promise<void>;
 }
@@ -28,6 +34,11 @@ export interface Daemon {
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const { cfg } = opts;
   const log = opts.log ?? ((level, text) => (level === "debug" ? undefined : console.error(`[${level}] ${text}`)));
+  const identity = opts.identity ?? loadOrCreateIdentity(opts.identityPath ?? cfg.e2ee.keyPath ?? defaultIdentityPath(cfg.nodeId));
+  log(
+    "info",
+    `E2EE 公钥指纹: ${keyFingerprint(identity.publicKey)}（模式: ${cfg.e2ee.mode === "required" ? "强制加密" : "自动支持"}）`,
+  );
   const adapters = opts.adapters ?? buildAdapters(cfg);
   let caps = await probeAll(adapters);
   for (const c of caps) log("info", `agent ${c.id}: ${c.installed ? `✓${c.version ? ` ${c.version}` : ""}` : "✗ 未安装"}${c.note ? ` (${c.note})` : ""}`);
@@ -39,6 +50,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     adapters,
     send: (m) => client.send(m),
     statePath: opts.statePath ?? join(AGENTFLEET_HOME, "state", `runs-${cfg.nodeId}.json`),
+    identity,
     log,
   });
 
@@ -48,10 +60,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         void runner.assign(msg.spec);
         return;
       case "run.input":
-        runner.input(msg.runId, msg.text);
+        runner.input(msg.runId, msg.text, msg.e2ee);
         return;
       case "run.approval":
-        runner.approval(msg.runId, msg.approvalId, msg.optionId);
+        runner.approval(msg.runId, msg.approvalId, msg.optionId, msg.e2ee);
         return;
       case "run.interrupt":
         void runner.interrupt(msg.runId);
@@ -79,6 +91,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         maxConcurrency: cfg.maxConcurrency,
         runtimes: caps,
         projects: projects(),
+        publicKey: identity.publicKey,
       },
       activeRuns: [...new Set([...runner.activeRunIds(), ...pending])],
     }),
@@ -96,6 +109,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   return {
     runner,
     client,
+    publicKey: identity.publicKey,
     capabilities: () => caps,
     async stop() {
       clearInterval(reprobe);

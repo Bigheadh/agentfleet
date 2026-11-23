@@ -5,6 +5,8 @@
 import {
   type CreateTaskRequest,
   CreateTaskRequest as CreateTaskRequestSchema,
+  ENCRYPTED_PLACEHOLDER,
+  ENCRYPTED_TASK_TITLE,
   type EventEnvelope,
   type HubToClient,
   type HubToNode,
@@ -15,6 +17,7 @@ import {
   type Run,
   type RunAction,
   type RunActionResponse,
+  type SealedBox,
   type Task,
   TaskConstraints,
 } from "@agentfleet/proto";
@@ -192,7 +195,7 @@ export class Hub {
         this.opts.notifier.notify(
           buildNotification(
             { kind: "approval", project: task.project, taskTitle: task.title, taskId: task.id, runId: run.id, approvalTitle: e.title, risk: e.risk },
-            this.opts.notifier.redact,
+            this.opts.notifier.redact || !!task.e2ee,
           ),
         );
       }
@@ -202,6 +205,25 @@ export class Hub {
       if (pending === 0) this.updateTask(run.taskId, { state: "running" });
     } else if (e.type === "run.status" && next.endedAt === null) {
       next = { ...next, status: e.status };
+    } else if (e.type === "encrypted") {
+      if (e.hint === "approval.requested") {
+        next = { ...next, pendingApprovals: next.pendingApprovals + 1, status: "waiting_approval" };
+        const task = this.updateTask(run.taskId, { state: "waiting_approval" });
+        if (task && this.opts.notifier) {
+          this.opts.notifier.notify(
+            buildNotification(
+              { kind: "approval", project: task.project, taskTitle: task.title, taskId: task.id, runId: run.id, approvalTitle: "", risk: "" },
+              true,
+            ),
+          );
+        }
+      } else if (e.hint === "approval.resolved") {
+        const pending = Math.max(0, next.pendingApprovals - 1);
+        next = { ...next, pendingApprovals: pending, status: pending === 0 ? "running" : next.status };
+        if (pending === 0) this.updateTask(run.taskId, { state: "running" });
+      } else if (e.hint === "run.status" && e.status && next.endedAt === null) {
+        next = { ...next, status: e.status };
+      }
     }
     this.saveRun(next);
     for (const c of this.clients) if (c.subs.has(env.runId)) c.send({ type: "event", envelope: env });
@@ -270,6 +292,7 @@ export class Hub {
           runtimeId: best.runtime.id,
           prompt: task.prompt,
           model: task.constraints.model,
+          ...(task.e2ee ? { e2ee: task.e2ee } : {}),
         },
       });
     }
@@ -308,8 +331,8 @@ export class Hub {
     const task: Task = {
       id: newId(),
       project: req.project,
-      title: req.title?.trim() || req.prompt.split("\n")[0]!.slice(0, 80),
-      prompt: req.prompt,
+      title: req.e2ee ? ENCRYPTED_TASK_TITLE : req.title?.trim() || req.prompt.split("\n")[0]!.slice(0, 80),
+      prompt: req.e2ee ? ENCRYPTED_PLACEHOLDER : req.prompt,
       priority: req.priority,
       constraints: TaskConstraints.parse(req.constraints),
       state: "queued",
@@ -318,6 +341,7 @@ export class Hub {
       runId: null,
       attempts: 0,
       note: null,
+      ...(req.e2ee ? { e2ee: req.e2ee } : {}),
     };
     this.store.saveTask(task);
     this.store.audit(actor, "task.create", task.id);
@@ -346,20 +370,31 @@ export class Hub {
     return this.store.getTask(t.id)!;
   }
 
-  sendInput(runId: string, text: string, actor: string) {
+  sendInput(runId: string, text: string, actor: string, e2ee?: SealedBox) {
     const run = this.store.getRun(runId);
     if (!run) throw new HubError(404, "run not found");
     if (run.endedAt !== null && run.status !== "completed") throw new HubError(409, "run already ended");
     const task = this.store.getTask(run.taskId);
     if (task && task.runId !== run.id) throw new HubError(409, "not the latest run of this task");
     this.store.audit(actor, "run.input", runId);
-    this.mustNodeConn(run.nodeId).send({ type: "run.input", runId, text });
+    this.mustNodeConn(run.nodeId).send({
+      type: "run.input",
+      runId,
+      text: e2ee ? ENCRYPTED_PLACEHOLDER : text,
+      ...(e2ee ? { e2ee } : {}),
+    });
   }
 
-  resolveApproval(runId: string, approvalId: string, optionId: string, actor: string) {
+  resolveApproval(runId: string, approvalId: string, optionId: string, actor: string, e2ee?: SealedBox) {
     const run = this.mustActiveRun(runId);
-    this.store.audit(actor, "run.approval", `${runId}/${approvalId}=${optionId}`);
-    this.mustNodeConn(run.nodeId).send({ type: "run.approval", runId, approvalId, optionId });
+    this.store.audit(actor, "run.approval", `${runId}/${approvalId}=${e2ee ? ENCRYPTED_PLACEHOLDER : optionId}`);
+    this.mustNodeConn(run.nodeId).send({
+      type: "run.approval",
+      runId,
+      approvalId,
+      optionId: e2ee ? ENCRYPTED_PLACEHOLDER : optionId,
+      ...(e2ee ? { e2ee } : {}),
+    });
   }
 
   interruptRun(runId: string, actor: string) {
@@ -408,7 +443,7 @@ export class Hub {
       this.opts.notifier.notify(
         buildNotification(
           { kind: next.state, project: next.project, taskTitle: next.title, taskId: next.id, runId: next.runId ?? undefined, note: next.note },
-          this.opts.notifier.redact,
+          this.opts.notifier.redact || !!next.e2ee,
         ),
       );
     }

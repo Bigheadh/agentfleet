@@ -38,3 +38,8 @@ policy:
     - command: '^git (status|diff|log)\b'
       decision: allow
   approvalTimeoutMinutes: 60
+
+# End-to-end encryption (node generates an X25519 keypair automatically; run `agentfleet-node key`).
+e2ee:
+  mode: optional       # set to "required" to refuse plaintext tasks/inputs/approvals
+  trustedDevices: []   # optional list of phone X25519 public keys (`agentfleet-node trust add <PUBKEY>`)

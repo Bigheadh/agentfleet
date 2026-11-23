@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { errorMessage, type HubClient } from "../api/client";
 import type { LiveSocket } from "../api/ws";
+import { decryptEnvelope } from "../lib/e2eePure";
 import { applyEvents, emptyTimeline, type TimelineState } from "./reduce";
 
 /** Coalesce bursts of streamed deltas into one render. */
@@ -11,18 +12,21 @@ const FLUSH_MS = 50;
 /**
  * Backfill a run's events over REST, then follow it live over the WS. The WS
  * subscription always asks for `after = lastSeq`, including after reconnects.
+ * When `dek` is provided, encrypted envelopes are decrypted before reducing.
  */
-export function useRunTimeline(client: HubClient, socket: LiveSocket, runId: string | null) {
+export function useRunTimeline(client: HubClient, socket: LiveSocket, runId: string | null, dek: Uint8Array | null = null) {
   const [state, setState] = useState<TimelineState>(emptyTimeline);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const stateRef = useRef<TimelineState>(emptyTimeline);
+  const dekRef = useRef<Uint8Array | null>(dek);
+  dekRef.current = dek;
   const queue = useRef<EventEnvelope[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flush = useCallback(() => {
     timer.current = null;
-    const batch = queue.current;
+    const batch = queue.current.map((e) => decryptEnvelope(e, dekRef.current));
     queue.current = [];
     const next = applyEvents(stateRef.current, batch);
     if (next !== stateRef.current) {
@@ -62,7 +66,8 @@ export function useRunTimeline(client: HubClient, socket: LiveSocket, runId: str
       .getRunEvents(runId, -1)
       .then((envs) => {
         if (cancelled) return;
-        stateRef.current = applyEvents(emptyTimeline, envs);
+        const plain = envs.map((e) => decryptEnvelope(e, dekRef.current));
+        stateRef.current = applyEvents(emptyTimeline, plain);
         setState(stateRef.current);
       })
       .catch((e) => !cancelled && setError(errorMessage(e)))
@@ -78,7 +83,7 @@ export function useRunTimeline(client: HubClient, socket: LiveSocket, runId: str
       if (timer.current) clearTimeout(timer.current);
       timer.current = null;
     };
-  }, [client, socket, runId, enqueue]);
+  }, [client, socket, runId, dek, enqueue]);
 
   /** Pull-to-refresh: fetch anything after our cursor (covers missed WS frames). */
   const refresh = useCallback(async () => {

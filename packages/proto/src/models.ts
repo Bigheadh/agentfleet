@@ -1,6 +1,7 @@
 /** Core domain models shared by hub, node daemon and clients. */
 import { z } from "zod";
 import { Capability, CapabilityFlag } from "./capability.ts";
+import { TaskE2EE } from "./e2ee.ts";
 import { RunStatus } from "./events.ts";
 
 export const NodeInfo = z.object({
@@ -15,6 +16,8 @@ export const NodeInfo = z.object({
   runtimes: z.array(Capability),
   /** Project ids this node has a local checkout for. */
   projects: z.array(z.string()).default([]),
+  /** Node's long-term X25519 public key (base64) for end-to-end encryption. */
+  publicKey: z.string().optional(),
 });
 export type NodeInfo = z.infer<typeof NodeInfo>;
 
@@ -59,6 +62,8 @@ export const Task = z.object({
   attempts: z.number().int().nonnegative(),
   /** Scheduler/hub explanation, e.g. why the task is still queued. */
   note: z.string().nullish(),
+  /** Present when the task's title, prompt, events, inputs, and approvals are E2EE. */
+  e2ee: TaskE2EE.optional(),
 });
 export type Task = z.infer<typeof Task>;
 
@@ -87,6 +92,8 @@ export const RunSpec = z.object({
   prompt: z.string(),
   model: z.string().optional(),
   instructions: z.string().optional(),
+  /** Forwarded blindly by the hub so the node can unwrap the task DEK. */
+  e2ee: TaskE2EE.optional(),
 });
 export type RunSpec = z.infer<typeof RunSpec>;
 

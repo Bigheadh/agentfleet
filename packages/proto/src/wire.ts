@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import { Capability } from "./capability.ts";
-import { FleetEvent, RunStatus } from "./events.ts";
+import { FleetEvent, RunStatus, SealedBox } from "./events.ts";
 import { RunAction, RunSpec } from "./models.ts";
 
 export const PROTOCOL_VERSION = 1;
@@ -21,6 +21,7 @@ export const NodeHello = z.object({
     maxConcurrency: z.number().int().positive(),
     runtimes: z.array(Capability),
     projects: z.array(z.string()),
+    publicKey: z.string().optional(),
   }),
   /** Runs still alive on the node after a reconnect. */
   activeRuns: z.array(z.string()),
@@ -48,8 +49,8 @@ export type NodeToHub = z.infer<typeof NodeToHub>;
 export const HubToNode = z.discriminatedUnion("type", [
   z.object({ type: z.literal("welcome"), nodeId: z.string(), hubName: z.string() }),
   z.object({ type: z.literal("run.assign"), spec: RunSpec }),
-  z.object({ type: z.literal("run.input"), runId: z.string(), text: z.string() }),
-  z.object({ type: z.literal("run.approval"), runId: z.string(), approvalId: z.string(), optionId: z.string() }),
+  z.object({ type: z.literal("run.input"), runId: z.string(), text: z.string(), e2ee: SealedBox.optional() }),
+  z.object({ type: z.literal("run.approval"), runId: z.string(), approvalId: z.string(), optionId: z.string(), e2ee: SealedBox.optional() }),
   z.object({ type: z.literal("run.interrupt"), runId: z.string() }),
   z.object({ type: z.literal("run.action"), runId: z.string(), action: RunAction, requestId: z.string() }),
   z.object({ type: z.literal("error"), message: z.string() }),

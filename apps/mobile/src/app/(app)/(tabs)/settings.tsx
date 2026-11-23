@@ -1,6 +1,7 @@
 import Constants from "expo-constants";
 import { ScrollView, StyleSheet, View } from "react-native";
 
+import { E2EESettings } from "@/components/E2EESettings";
 import { PushSettings } from "@/components/PushSettings";
 import { Button, Card, Dot, Row, SectionTitle, Txt } from "@/components/ui";
 import { t } from "@/i18n/strings";
@@ -54,6 +55,7 @@ export default function SettingsScreen() {
       </Card>
 
       <PushSettings client={client} />
+      <E2EESettings />
 
       <SectionTitle>{t.appName}</SectionTitle>
       <Card style={{ paddingVertical: 4 }}>
