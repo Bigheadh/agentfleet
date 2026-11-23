@@ -11,6 +11,7 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts start",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --external:bun:sqlite --outfile=dist/agentfleet-hub.mjs --banner:js=\"import { createRequire as __afCreateRequire } from 'node:module'; const require = __afCreateRequire(import.meta.url);\"",
     "build:bin": "bun build src/cli.ts --compile --outfile dist/agentfleet-hub"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.2"
+    "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2"
   }
 }

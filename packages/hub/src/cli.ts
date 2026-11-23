@@ -21,13 +21,13 @@ const env = process.env;
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
-    port: { type: "string", default: env.AGENTFLEET_PORT ?? "8787" },
+    port: { type: "string", default: env.AGENTFLEET_PORT || "8787" },
     host: { type: "string", default: "0.0.0.0" },
-    data: { type: "string", default: env.AGENTFLEET_HUB_DATA ?? join(homedir(), ".agentfleet", "hub") },
-    name: { type: "string", default: env.AGENTFLEET_HUB_NAME ?? "AgentFleet Hub" },
-    "public-url": { type: "string", default: env.AGENTFLEET_PUBLIC_URL },
-    "ntfy-url": { type: "string", default: env.AGENTFLEET_NTFY_URL },
-    "webhook-url": { type: "string", default: env.AGENTFLEET_WEBHOOK_URL },
+    data: { type: "string", default: env.AGENTFLEET_HUB_DATA || join(homedir(), ".agentfleet", "hub") },
+    name: { type: "string", default: env.AGENTFLEET_HUB_NAME || "AgentFleet Hub" },
+    "public-url": { type: "string", default: env.AGENTFLEET_PUBLIC_URL || undefined },
+    "ntfy-url": { type: "string", default: env.AGENTFLEET_NTFY_URL || undefined },
+    "webhook-url": { type: "string", default: env.AGENTFLEET_WEBHOOK_URL || undefined },
     "no-expo-push": { type: "boolean", default: env.AGENTFLEET_EXPO_PUSH === "0" },
     "push-redact": { type: "boolean", default: env.AGENTFLEET_PUSH_REDACT === "1" },
     help: { type: "boolean", short: "h" },
@@ -35,7 +35,7 @@ const { positionals, values } = parseArgs({
 });
 
 const cmd = positionals[0] ?? "start";
-const publicUrl = values["public-url"] ?? `http://${lanAddress()}:${values.port}`;
+const publicUrl = values["public-url"] || `http://${lanAddress()}:${values.port}`;
 
 if (values.help) {
   console.log(
@@ -56,9 +56,9 @@ if (cmd === "start") {
     name: values.name,
     notify: {
       expo: !values["no-expo-push"],
-      ntfyUrl: values["ntfy-url"],
-      ntfyToken: env.AGENTFLEET_NTFY_TOKEN,
-      webhookUrl: values["webhook-url"],
+      ntfyUrl: values["ntfy-url"] || undefined,
+      ntfyToken: env.AGENTFLEET_NTFY_TOKEN || undefined,
+      webhookUrl: values["webhook-url"] || undefined,
       redact: values["push-redact"],
     },
   });
@@ -79,6 +79,8 @@ if (cmd === "start") {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 } else if (cmd === "pair" || cmd === "join-token") {
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(values.data!, { recursive: true });
   const db = await openDb(join(values.data!, "hub.db"));
   const store = new Store(db);
   if (cmd === "pair") printPairing(store, values.name!);

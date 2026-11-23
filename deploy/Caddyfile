@@ -1,0 +1,6 @@
+# Automatic HTTPS + WebSocket reverse proxy for AgentFleet Hub.
+# Set AGENTFLEET_DOMAIN in .env and start with: docker compose --profile tls up -d
+{$AGENTFLEET_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy hub:8787
+}

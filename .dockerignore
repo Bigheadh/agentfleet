@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+apps/mobile
+packages/fleetd
+tests
+docs
+examples
+.env
+*.log

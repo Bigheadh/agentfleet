@@ -1,0 +1,56 @@
+# AgentFleet Hub — one-command self-hosted deployment.
+#
+# Mode 1 — LAN / Tailscale (0 cost, no domain required):
+#   cp .env.example .env    # optionally set AGENTFLEET_PUBLIC_URL
+#   docker compose up -d
+#
+# Mode 2 — Public VPS with automatic HTTPS (Caddy + Let's Encrypt):
+#   cp .env.example .env    # set AGENTFLEET_DOMAIN=hub.example.com and AGENTFLEET_PUBLIC_URL=https://hub.example.com
+#   docker compose --profile tls up -d
+#
+# Pair phone / add node:
+#   docker compose exec hub agentfleet-hub pair
+#   docker compose exec hub agentfleet-hub join-token
+
+services:
+  hub:
+    image: ${AGENTFLEET_IMAGE:-ghcr.io/bigheadh/agentfleet-hub:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${AGENTFLEET_BIND:-8787:8787}"
+    volumes:
+      - hub_data:/data
+    environment:
+      AGENTFLEET_HUB_NAME: ${AGENTFLEET_HUB_NAME:-AgentFleet Hub}
+      AGENTFLEET_PUBLIC_URL: ${AGENTFLEET_PUBLIC_URL:-}
+      AGENTFLEET_EXPO_PUSH: ${AGENTFLEET_EXPO_PUSH:-1}
+      AGENTFLEET_PUSH_REDACT: ${AGENTFLEET_PUSH_REDACT:-0}
+      AGENTFLEET_NTFY_URL: ${AGENTFLEET_NTFY_URL:-}
+      AGENTFLEET_NTFY_TOKEN: ${AGENTFLEET_NTFY_TOKEN:-}
+      AGENTFLEET_WEBHOOK_URL: ${AGENTFLEET_WEBHOOK_URL:-}
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on:
+      hub:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      AGENTFLEET_DOMAIN: ${AGENTFLEET_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  hub_data:
+  caddy_data:
+  caddy_config:

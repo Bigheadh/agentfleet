@@ -57,7 +57,7 @@ pnpm fleetd start
 | Codex（ACP 备用） | `npm i -g @zed-industries/codex-acp` | ACP `codex-acp` |
 | 其他 ACP agent | 见各自文档 | 在 `node.yaml` 的 `agents:` 下添加 `acp:<名字>` |
 
-配置示例见 [examples/node.yaml](examples/node.yaml)；用 OpenAI 兼容中转 / 自建网关驱动三个 agent 见 [docs/relay.md](docs/relay.md)。
+配置示例见 [examples/node.yaml](examples/node.yaml)；Docker 一键部署 Hub（含 Caddy 自动 HTTPS）见 [docs/deploy.md](docs/deploy.md)；用 OpenAI 兼容中转 / 自建网关驱动三个 agent 见 [docs/relay.md](docs/relay.md)。
 
 ## 仓库结构
 
