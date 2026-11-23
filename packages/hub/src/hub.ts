@@ -67,6 +67,7 @@ export class Hub {
   get notifier(): Notifier | null {
     return this.opts.notifier;
   }
+  private closed = false;
   private nodes = new Map<string, NodeEntry>();
   private clients = new Set<ClientConn>();
   private pendingActions = new Map<
@@ -86,11 +87,27 @@ export class Hub {
     }
   }
 
+  /** Stops accepting node events and clears timers before the underlying DB is closed. */
+  close() {
+    this.closed = true;
+    for (const entry of this.nodes.values()) {
+      if (entry.graceTimer) clearTimeout(entry.graceTimer);
+      entry.graceTimer = undefined;
+      entry.conn = null;
+    }
+    for (const p of this.pendingActions.values()) {
+      clearTimeout(p.timer);
+      p.resolve({ ok: false, output: "hub 正在关闭" });
+    }
+    this.pendingActions.clear();
+  }
+
   // ======================================================================
   // Node side
   // ======================================================================
 
   nodeConnected(nodeId: string, conn: NodeConn) {
+    if (this.closed) return conn.close(1001, "hub closing");
     const existing = this.nodes.get(nodeId);
     if (existing?.conn && existing.conn !== conn) existing.conn.close(4000, "replaced by new connection");
     if (existing?.graceTimer) clearTimeout(existing.graceTimer);
@@ -99,6 +116,7 @@ export class Hub {
   }
 
   nodeDisconnected(nodeId: string, conn: NodeConn) {
+    if (this.closed) return;
     const entry = this.nodes.get(nodeId);
     if (!entry || entry.conn !== conn) return;
     entry.conn = null;
@@ -106,6 +124,7 @@ export class Hub {
     this.store.saveNodeInfo(entry.info);
     this.emit({ type: "node", node: entry.info });
     entry.graceTimer = setTimeout(() => {
+      if (this.closed) return;
       for (const run of this.store.activeRunsOnNode(nodeId)) {
         this.finishRun(run, "failed", "节点离线超时", { requeue: true });
       }
@@ -113,6 +132,7 @@ export class Hub {
   }
 
   nodeMessage(nodeId: string, msg: NodeToHub) {
+    if (this.closed) return;
     const entry = this.nodes.get(nodeId);
     if (!entry?.conn) return;
     switch (msg.type) {

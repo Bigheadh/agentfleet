@@ -48,6 +48,7 @@ export async function startHub(opts: StartHubOptions) {
     notifier,
     close: () =>
       new Promise<void>((resolve) => {
+        hub.close();
         server.close(async () => {
           await notifier?.flush();
           db.close();
