@@ -30,7 +30,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const log = opts.log ?? ((level, text) => (level === "debug" ? undefined : console.error(`[${level}] ${text}`)));
   const adapters = opts.adapters ?? buildAdapters(cfg);
   let caps = await probeAll(adapters);
-  for (const c of caps) log("info", `agent ${c.id}: ${c.installed ? `✓ ${c.version ?? ""}` : "✗ 未安装"}${c.note ? ` (${c.note})` : ""}`);
+  for (const c of caps) log("info", `agent ${c.id}: ${c.installed ? `✓${c.version ? ` ${c.version}` : ""}` : "✗ 未安装"}${c.note ? ` (${c.note})` : ""}`);
 
   const projects = () => Object.keys(cfg.projects);
   let client!: HubClient;

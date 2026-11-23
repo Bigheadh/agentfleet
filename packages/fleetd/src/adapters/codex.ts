@@ -5,9 +5,12 @@
  * stdio transport (the websocket transport is marked experimental/unsupported).
  * Protocol reference: `codex app-server generate-ts --out DIR`.
  */
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Capability, FileDiff, FleetEvent, RunSpec } from "@agentfleet/proto";
 import { JsonRpcError, JsonRpcPeer } from "../jsonrpc.ts";
-import { commandExists, exec, killTree, spawnAgent, versionOf } from "../proc.ts";
+import { classifyStderr, commandExists, exec, killTree, spawnAgent, versionOf } from "../proc.ts";
 import type { AdapterContext, AgentAdapter, AgentCommand, AgentSession, TurnResult } from "./types.ts";
 
 export interface CodexDef extends AgentCommand {
@@ -46,10 +49,25 @@ export class CodexAdapter implements AgentAdapter {
     const installed = await commandExists(this.def.command);
     let version: string | null = null;
     let loggedIn: boolean | null = null;
+    const notes: string[] = [];
     if (installed && this.def.probeLogin !== false) {
       version = await versionOf(this.def.command, ["--version"]);
       loggedIn = (await exec(this.def.command, ["login", "status"], { timeoutMs: 8000 })).code === 0;
+      if (!loggedIn) {
+        // `codex login status` only knows ChatGPT/API-key logins. A custom
+        // model_provider (env_key) or OPENAI_API_KEY works without it.
+        const provider = customProvider({ ...process.env, ...this.def.env });
+        if (provider) {
+          loggedIn = null;
+          notes.push(`使用自定义 provider: ${provider}`);
+        }
+      }
+      if (process.platform === "linux" && !(await commandExists("bwrap"))) {
+        notes.push("未安装 bubblewrap，Codex 沙箱不可用（apt install bubblewrap）");
+      }
     }
+    if (!installed) notes.push("未找到 codex 命令（npm i -g @openai/codex）");
+    else if (loggedIn === false) notes.push("未登录：在节点上运行 codex login");
     return {
       id: this.id,
       agent: "Codex",
@@ -59,7 +77,7 @@ export class CodexAdapter implements AgentAdapter {
       loggedIn,
       models: [],
       supports: ["interactiveApproval", "multiTurn", "resume", "fork", "usageReport", "structuredDiff", "images"],
-      note: !installed ? "未找到 codex 命令（npm i -g @openai/codex）" : loggedIn === false ? "未登录：在节点上运行 codex login" : undefined,
+      note: notes.length ? notes.join("；") : undefined,
     };
   }
 
@@ -67,7 +85,10 @@ export class CodexAdapter implements AgentAdapter {
     const child = spawnAgent(this.def.command, this.def.args, {
       cwd: ctx.cwd,
       env: { ...process.env, ...this.def.env },
-      onStderr: (line) => ctx.log("debug", `[codex] ${line}`),
+      onStderr: (line) => {
+        const { level, text } = classifyStderr(line);
+        ctx.log(level, `[codex] ${text}`);
+      },
     });
     const exited = new Promise<string>((resolve) => {
       child.once("exit", (code, sig) => resolve(`codex app-server exited (code=${code}, signal=${sig})`));
@@ -297,4 +318,22 @@ function toolStart(item: ThreadItem): FleetEvent | null {
 
 function toDiff(c: { path: string; diff: string }): FileDiff {
   return { path: c.path, unified: c.diff };
+}
+
+/**
+ * Returns a description of a non-ChatGPT credential source Codex will use, if any:
+ * a custom top-level `model_provider` in $CODEX_HOME/config.toml, or OPENAI_API_KEY.
+ */
+export function customProvider(env: NodeJS.ProcessEnv): string | null {
+  const home = env.CODEX_HOME ?? join(homedir(), ".codex");
+  try {
+    const toml = readFileSync(join(home, "config.toml"), "utf8");
+    // Only top-level keys (before the first [table]) select the provider.
+    const top = toml.split(/^\s*\[/m)[0] ?? "";
+    const m = /^\s*model_provider\s*=\s*["']([^"']+)["']/m.exec(top);
+    if (m && m[1] !== "openai") return m[1]!;
+  } catch {
+    // no config file
+  }
+  return env.OPENAI_API_KEY ? "OPENAI_API_KEY" : null;
 }

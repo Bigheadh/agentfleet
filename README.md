@@ -55,7 +55,7 @@ pnpm fleetd start
 | Codex（ACP 备用） | `npm i -g @zed-industries/codex-acp` | ACP `codex-acp` |
 | 其他 ACP agent | 见各自文档 | 在 `node.yaml` 的 `agents:` 下添加 `acp:<名字>` |
 
-配置示例见 [examples/node.yaml](examples/node.yaml)。
+配置示例见 [examples/node.yaml](examples/node.yaml)；用 OpenAI 兼容中转 / 自建网关驱动三个 agent 见 [docs/relay.md](docs/relay.md)。
 
 ## 仓库结构
 
@@ -82,7 +82,7 @@ cd apps/mobile && pnpm start    # Expo 开发服务器
 
 - **传输安全**：M1 依赖 HTTPS/WSS（请把 hub 放在 TLS 反向代理、Tailscale 或局域网后面）。端到端加密（扫码 Noise 握手，hub 只转发密文）在路线图中。
 - **推送通知**：尚未实现（自托管推送网关在路线图中）；App 在前台时通过 WebSocket 实时更新。
-- **真实 agent**：测试使用 mock agent 覆盖协议路径；Codex / Gemini / Claude 的真实账号联调需要你自己的凭据。
+- **真实 agent**：已用真实 Codex 0.171 / Gemini CLI 0.70 / Claude Code（claude-agent-acp 0.23）通过 OpenAI 兼容中转跑通完整链路（派发 → 手机审批 → diff → 提交）；单元测试仍使用 mock agent。
 - 单 hub、单用户；尚无多用户 / 团队权限。
 
 ## License

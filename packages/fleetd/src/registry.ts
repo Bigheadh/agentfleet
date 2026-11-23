@@ -19,13 +19,14 @@ export const BUILTIN_ACP_AGENTS: AcpAgentDef[] = [
     versionCommand: { command: "gemini", args: ["--version"] },
   },
   {
-    // npm i -g @zed-industries/claude-agent-acp  (wraps the Claude Agent SDK; needs `claude` logged in)
+    // npm i -g @zed-industries/claude-agent-acp — bundles Claude Code via the Agent SDK,
+    // so a separate `claude` binary is NOT required. Auth: `claude /login` once, or
+    // ANTHROPIC_API_KEY (+ ANTHROPIC_BASE_URL / ANTHROPIC_DEFAULT_*_MODEL for gateways).
+    // No version flag: the bridge reports its version in the ACP initialize response.
     id: "acp:claude",
     agent: "Claude Code",
     command: "claude-agent-acp",
     args: [],
-    requires: "claude",
-    versionCommand: { command: "claude", args: ["--version"] },
   },
   {
     // npm i -g @zed-industries/codex-acp  — fallback when the native app-server adapter breaks
@@ -33,7 +34,6 @@ export const BUILTIN_ACP_AGENTS: AcpAgentDef[] = [
     agent: "Codex (ACP)",
     command: "codex-acp",
     args: [],
-    versionCommand: { command: "codex", args: ["--version"] },
   },
 ];
 

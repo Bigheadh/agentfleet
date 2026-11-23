@@ -72,3 +72,11 @@ export function killTree(child: ChildProcess, graceMs = 3000): Promise<void> {
     child.kill("SIGTERM");
   });
 }
+
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+/** Agent stderr is mostly noise (debug); lines that look like errors are surfaced to the phone as warnings. */
+export function classifyStderr(line: string): { level: "debug" | "warn"; text: string } {
+  const text = line.replace(ANSI, "");
+  return { level: /\bERROR\b|\bFATAL\b|\bpanic(ked)?\b/.test(text) ? "warn" : "debug", text };
+}

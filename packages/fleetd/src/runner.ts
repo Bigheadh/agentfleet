@@ -43,6 +43,16 @@ interface RunState {
   idleTimer: NodeJS.Timeout | null;
 }
 
+type TextEvent = Extract<FleetEvent, { type: "message.delta" | "reasoning.delta" }>;
+
+/** Consecutive text deltas are merged for up to this long before being sent. */
+const TEXT_COALESCE_MS = 120;
+
+function sameStream(a: TextEvent, b: FleetEvent): b is TextEvent {
+  if (a.type !== b.type) return false;
+  return a.type !== "message.delta" || (b.type === "message.delta" && a.role === b.role);
+}
+
 export interface RunnerOptions {
   cfg: NodeConfig;
   adapters: Map<string, AgentAdapter>;
@@ -58,6 +68,7 @@ export class Runner {
   private policy: Policy;
   private worktrees: Worktrees;
   private log: NonNullable<RunnerOptions["log"]>;
+  private pendingText = new Map<string, { meta: RunMeta; event: TextEvent; timer: NodeJS.Timeout }>();
 
   constructor(private opts: RunnerOptions) {
     this.policy = new Policy(opts.cfg.policy);
@@ -183,6 +194,7 @@ export class Runner {
   }
 
   async shutdown() {
+    for (const runId of [...this.pendingText.keys()]) this.flushText(runId);
     await Promise.all([...this.runs.values()].map((st) => this.closeSession(st)));
     this.persist();
   }
@@ -367,6 +379,32 @@ export class Runner {
   }
 
   private emitMeta(meta: RunMeta, event: FleetEvent) {
+    const runId = meta.spec.runId;
+    const pending = this.pendingText.get(runId);
+    const isText = event.type === "message.delta" || event.type === "reasoning.delta";
+    if (isText && pending && sameStream(pending.event, event)) {
+      pending.event.text += event.text;
+      return;
+    }
+    if (pending) this.flushText(runId);
+    if (isText) {
+      const timer = setTimeout(() => this.flushText(runId), TEXT_COALESCE_MS);
+      timer.unref?.();
+      this.pendingText.set(runId, { meta, event: { ...(event as TextEvent) }, timer });
+      return;
+    }
+    this.sendEvent(meta, event);
+  }
+
+  private flushText(runId: string) {
+    const p = this.pendingText.get(runId);
+    if (!p) return;
+    clearTimeout(p.timer);
+    this.pendingText.delete(runId);
+    this.sendEvent(p.meta, p.event);
+  }
+
+  private sendEvent(meta: RunMeta, event: FleetEvent) {
     const seq = meta.seq++;
     this.opts.send({ type: "run.event", runId: meta.spec.runId, seq, ts: Date.now(), event });
   }
