@@ -1,0 +1,26 @@
+{
+  "name": "agentfleet",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open-source, self-hosted mobile control plane for scheduling coding agents across machines.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "hub": "tsx packages/hub/src/cli.ts",
+    "fleetd": "tsx packages/fleetd/src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1",
+    "ws": "^8.23.0"
+  }
+}

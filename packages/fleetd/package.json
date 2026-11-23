@@ -1,0 +1,26 @@
+{
+  "name": "@agentfleet/fleetd",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "agentfleet-node": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts start",
+    "build:bin": "bun build src/cli.ts --compile --outfile dist/agentfleet-node"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^2.9.1",
+    "@agentfleet/proto": "workspace:*",
+    "ws": "^8.23.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2"
+  }
+}

@@ -1,0 +1,40 @@
+# ~/.agentfleet/node.yaml — example. `agentfleet-node join` writes hub/nodeId/token for you.
+hub: http://192.168.1.10:8787
+nodeId: "<written by join>"
+token: "<written by join>"
+name: my-macbook
+labels: [mac, gpu]
+maxConcurrency: 2
+workRoot: ~/.agentfleet/worktrees
+idleSessionMinutes: 30
+
+projects:
+  web:
+    path: ~/code/web
+    baseRef: origin/main   # optional, defaults to HEAD
+
+# Built-ins: codex (native app-server), acp:gemini, acp:claude, acp:codex.
+# Any ACP-speaking agent can be added with an id starting with "acp:".
+agents:
+  codex:
+    sandbox: workspace-write
+  acp:claude:
+    enabled: true
+  acp:goose:
+    agent: Goose
+    command: goose
+    args: [acp]
+
+# Node-local approval policy: the final authority. The phone only sees "ask".
+policy:
+  defaults:
+    read: allow
+    write: ask
+    exec: ask
+    danger: ask        # danger is never auto-allowed, even by rules
+  rules:
+    - command: '^(npm|pnpm|yarn) (test|run (lint|typecheck))\b'
+      decision: allow
+    - command: '^git (status|diff|log)\b'
+      decision: allow
+  approvalTimeoutMinutes: 60

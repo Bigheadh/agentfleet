@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.db
+*.db-*
+.expo/
+apps/mobile/dist/
+.DS_Store
+coverage/

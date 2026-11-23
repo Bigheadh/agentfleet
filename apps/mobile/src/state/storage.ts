@@ -1,0 +1,14 @@
+/** Native (iOS/Android) persistence: device token lives in the Keychain/Keystore via expo-secure-store. */
+import * as SecureStore from "expo-secure-store";
+
+export async function getItem(key: string): Promise<string | null> {
+  return SecureStore.getItemAsync(key);
+}
+
+export async function setItem(key: string, value: string): Promise<void> {
+  await SecureStore.setItemAsync(key, value, { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK });
+}
+
+export async function removeItem(key: string): Promise<void> {
+  await SecureStore.deleteItemAsync(key);
+}

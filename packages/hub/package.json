@@ -1,0 +1,25 @@
+{
+  "name": "@agentfleet/hub",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "agentfleet-hub": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts start",
+    "build:bin": "bun build src/cli.ts --compile --outfile dist/agentfleet-hub"
+  },
+  "dependencies": {
+    "@agentfleet/proto": "workspace:*",
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.23.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2"
+  }
+}
