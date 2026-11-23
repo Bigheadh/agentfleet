@@ -6,3 +6,5 @@ dist/
 apps/mobile/dist/
 .DS_Store
 coverage/
+.env
+.*.tmp/
