@@ -70,6 +70,11 @@ docker compose exec hub agentfleet-hub pair
 # 生成新的节点加入令牌（1 小时有效）
 docker compose exec hub agentfleet-hub join-token
 
+# 查看已配对设备 / 吊销设备 / 导出审计日志
+docker compose exec hub agentfleet-hub devices
+docker compose exec hub agentfleet-hub revoke <deviceId>
+docker compose exec hub agentfleet-hub audit --limit 100 --json
+
 # 升级到最新镜像
 docker compose pull && docker compose up -d
 

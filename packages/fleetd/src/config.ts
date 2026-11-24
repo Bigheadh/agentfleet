@@ -55,6 +55,8 @@ export const NodeConfig = z.object({
   e2ee: E2EEConfig.prefault({}),
   /** Keep an agent session alive this long after a turn for follow-up prompts. */
   idleSessionMinutes: z.number().positive().default(30),
+  /** Abort a hung agent turn after this many active minutes (paused while waiting for approval). */
+  turnTimeoutMinutes: z.number().positive().default(30),
 });
 export type NodeConfig = z.infer<typeof NodeConfig>;
 

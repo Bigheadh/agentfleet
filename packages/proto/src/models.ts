@@ -64,6 +64,8 @@ export const Task = z.object({
   note: z.string().nullish(),
   /** Present when the task's title, prompt, events, inputs, and approvals are E2EE. */
   e2ee: TaskE2EE.optional(),
+  /** Shared group id for parallel multi-agent comparison runs. */
+  groupId: z.string().optional(),
 });
 export type Task = z.infer<typeof Task>;
 

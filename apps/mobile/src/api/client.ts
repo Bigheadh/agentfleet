@@ -4,6 +4,9 @@
  * error instead of undefined-property crashes deep in the UI.
  */
 import {
+  AuditEntry,
+  DeviceInfo,
+  JoinTokenResponse,
   MeResponse,
   NodeInfo,
   PairResponse,
@@ -166,6 +169,21 @@ export class HubClient {
   registerPush(expoPushToken: string | null): Promise<unknown> {
     const body: RegisterPushRequest = { expoPushToken };
     return this.post("/api/devices/me/push", Ok, body);
+  }
+  createJoinToken(): Promise<JoinTokenResponse> {
+    return this.post("/api/nodes/join-token", JoinTokenResponse);
+  }
+  removeNode(nodeId: string): Promise<unknown> {
+    return this.post(`/api/nodes/${encodeURIComponent(nodeId)}/remove`, Ok);
+  }
+  listDevices(): Promise<DeviceInfo[]> {
+    return this.get("/api/devices", z.array(DeviceInfo));
+  }
+  revokeDevice(deviceId: string): Promise<unknown> {
+    return this.post(`/api/devices/${encodeURIComponent(deviceId)}/revoke`, Ok);
+  }
+  listAudit(limit = 50): Promise<AuditEntry[]> {
+    return this.get(`/api/audit?limit=${limit}`, z.array(AuditEntry));
   }
 }
 

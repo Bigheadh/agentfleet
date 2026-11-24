@@ -22,11 +22,11 @@ AgentFleet 让你在手机上下发任务给家里、公司或云上的多台开
 
 ## 核心特性
 
-- **多 agent 接入**：ACP（Agent Client Protocol）作为通用层，一个适配器覆盖所有 ACP agent；Codex 走原生 `codex app-server` 获取更深能力。已用真实 Codex、Gemini CLI、Claude Code 跑通完整链路（派发 → 审批 → diff → 提交）。
+- **多 agent 与并行对比（Best-of-N）**：ACP（Agent Client Protocol）作为通用层，一个适配器覆盖所有 ACP agent；Codex 走原生 `codex app-server` 获取更深能力。新建任务支持**多 Agent 并行对比**，一次向多个 agent 并行派发独立 worktree 任务，完成后对比 diff 择优提交。已用真实 Codex、Gemini CLI、Claude Code（含并行 E2EE 模式）跑通完整链路。
 - **端到端加密（E2EE）**：App ⇄ 节点采用 `X25519 + HKDF-SHA256 + XChaCha20-Poly1305`（Noise IK 风格 `es + ss` 双向认证密钥封装 + 每任务独立 DEK），扫码校验节点公钥、支持节点强制加密与设备白名单。Hub 只做调度与盲转发，看不到提示词、输出、diff 或审批详情（[docs/e2ee.md](docs/e2ee.md)）。
 - **推送通知**：审批请求、任务待审阅、任务最终失败时触发推送，点击直达对应任务。支持 **Expo 推送**、可完全自托管的 **ntfy** 与通用 **Webhook**，支持脱敏模式（E2EE 任务自动强制脱敏）（[docs/notifications.md](docs/notifications.md)）。
-- **能力感知调度**：按 agent、项目、标签、能力（如 `interactiveApproval`、`multiTurn`）与 E2EE 密钥持有情况筛选节点，按负载、接入层级、偏好打分；排不上队时明确说明原因。
-- **节点本地策略为最终权威**：`read / write / exec / danger` 四级风险分级，危险命令（`sudo`、`rm -rf /`、`git push --force` 等）永远不会被规则自动放行，手机端高风险审批需生物识别确认。
+- **能力感知调度 & 回合看门狗**：按 agent、项目、标签、能力（如 `interactiveApproval`、`multiTurn`）、指定节点/模型与 E2EE 密钥持有情况筛选节点并打分；支持可配置的回合超时看门狗（`turnTimeoutMinutes`，等待人工审批期间自动暂停计时），防止卡死进程永久占用并发槽位。
+- **节点本地策略与设备审计**：`read / write / exec / danger` 四级风险分级，危险命令（`sudo`、`rm -rf /`、`git push --force` 等）任何配置下均不会自动放行；支持在手机端或 CLI **一键吊销已配对设备**（立即断开实时连接）、移除离线节点及查看/导出操作审计日志。
 - **Worktree 隔离 & 自带凭据**：每个运行使用独立的 `fleet/<id>` 分支与 worktree，不污染主工作区，自动排除 `__pycache__` / `node_modules` 等缓存产物；agent 在你自己的机器上使用你自己的凭据运行，不代管、不共享任何订阅。
 
 ---
@@ -46,13 +46,14 @@ docker compose up -d
 # docker compose --profile tls up -d
 ```
 
-查看配对二维码和节点加入命令：
+查看配对二维码和常用运维命令：
 
 ```bash
 docker compose logs hub
-# 后续随时重新生成：
-docker compose exec hub agentfleet-hub pair
-docker compose exec hub agentfleet-hub join-token
+docker compose exec hub agentfleet-hub pair            # 生成手机配对二维码
+docker compose exec hub agentfleet-hub join-token      # 生成节点加入令牌（也可在 App「节点」页直接生成）
+docker compose exec hub agentfleet-hub devices         # 查看已配对设备
+docker compose exec hub agentfleet-hub audit --limit 50
 ```
 
 > 也提供预编译镜像 `ghcr.io/bigheadh/agentfleet-hub:latest`（`linux/amd64` / `linux/arm64`）与单文件二进制，详见 [docs/deploy.md](docs/deploy.md)。
@@ -72,6 +73,7 @@ agentfleet-node join <HUB_URL> <JOIN_TOKEN> --name my-macbook
 agentfleet-node project add web ~/code/web
 agentfleet-node probe          # 检查本机已安装 / 已登录的 agent
 agentfleet-node key            # 显示本节点 E2EE 公钥指纹与校验二维码
+agentfleet-node status         # 查看节点配置、超时与 E2EE 概览
 agentfleet-node start
 ```
 
@@ -80,7 +82,7 @@ agentfleet-node start
 - **真机构建（推荐，支持远程推送）**：使用 Expo EAS 构建自己的 Android APK / iOS 包（配置文件已就绪：[apps/mobile/eas.json](apps/mobile/eas.json)，步骤见 [docs/release.md](docs/release.md)）。
 - **本地开发预览**：`pnpm install && cd apps/mobile && pnpm start`（也支持 Web 预览 `pnpm web`）。
 
-打开 App 扫描 Hub 的配对二维码 → 到「节点」页扫码校验节点公钥（开启端到端加密）→ 新建任务即可开始远程调度。
+打开 App 扫描 Hub 配对二维码 → 到「节点」页扫码校验节点公钥（开启端到端加密，也可直接点「＋ 添加节点」生成 Join Token）→ 在「任务」页按状态筛选或搜索（支持已解密标题），新建单个或「多 Agent 并行对比」任务即可远程调度；在「设置」页可管理已配对设备（一键吊销）与查看审计日志。
 
 ---
 
@@ -120,8 +122,8 @@ agentfleet-node start
 
 ```text
 packages/proto    共享协议与 E2EE 加密原语（FleetEvent、能力模型、wire/API schema、X25519/XChaCha20）
-packages/hub      Hub 服务端（HTTP + WS、SQLite 存储、调度器、配对、推送通知）
-packages/fleetd   节点守护进程（ACP/Codex 适配器、本地策略、git worktree、E2EE runner）
+packages/hub      Hub 服务端（HTTP + WS、SQLite 存储、调度器、设备吊销、审计日志、推送通知）
+packages/fleetd   节点守护进程（ACP/Codex 适配器、本地策略、回合看门狗、git worktree、E2EE runner）
 apps/mobile       Expo（React Native）手机 App（支持 iOS / Android / Web）
 deploy/           Caddy 自动 HTTPS 反代配置
 scripts/          跨平台 Bun 打包脚本（build-release.sh）与一键安装脚本（install.sh）
@@ -132,8 +134,8 @@ docs/             设计、部署、安全与运维文档
 ```bash
 pnpm install
 pnpm typecheck
-pnpm test                                  # 服务端 + 协议 + 端到端测试
-pnpm --filter @agentfleet/mobile test      # 移动端单元测试
+pnpm test                                  # 服务端 + 协议 + 端到端测试（54 tests）
+pnpm --filter @agentfleet/mobile test      # 移动端单元测试（30 tests）
 pnpm hub start                             # 源码启动 Hub
 pnpm fleetd start                          # 源码启动节点守护进程
 ```
@@ -141,7 +143,7 @@ pnpm fleetd start                          # 源码启动节点守护进程
 ## 当前边界与路线图
 
 - 当前定位为单 Hub、单用户自托管控制面；生产公网部署请配合 HTTPS/WSS（`--profile tls`）或 Tailscale。
-- 后续计划：多机并行对比（best-of-N）、定时巡检任务（cron）、多用户与项目级权限。
+- 后续计划：定时巡检任务（cron）、多用户与项目级权限、独立桌面/Web 控制台增强。
 
 ## License
 

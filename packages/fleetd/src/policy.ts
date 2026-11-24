@@ -68,7 +68,8 @@ export class Policy {
       if (risk === "danger" && r.decision === "allow") continue;
       return { risk, decision: r.decision, rule: r.src };
     }
-    return { risk, decision: this.config.defaults[risk] };
+    const def = this.config.defaults[risk];
+    return { risk, decision: risk === "danger" && def === "allow" ? "ask" : def };
   }
 }
 

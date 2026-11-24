@@ -62,12 +62,43 @@ export class Store {
     return this.db.get("SELECT id, name FROM devices WHERE token_hash = ?", sha256(token));
   }
 
+  touchDevice(id: string) {
+    this.db.run("UPDATE devices SET last_seen = ? WHERE id = ?", Date.now(), id);
+  }
+
+  listDevices(): Array<{
+    id: string;
+    name: string;
+    createdAt: number;
+    lastSeen: number | null;
+    hasPush: boolean;
+    publicKey: string | null;
+  }> {
+    return this.db
+      .all<{
+        id: string;
+        name: string;
+        created_at: number;
+        last_seen: number | null;
+        push_token: string | null;
+        public_key: string | null;
+      }>("SELECT id, name, created_at, last_seen, push_token, public_key FROM devices ORDER BY created_at DESC")
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        createdAt: r.created_at,
+        lastSeen: r.last_seen,
+        hasPush: r.push_token !== null,
+        publicKey: r.public_key,
+      }));
+  }
+
   countDevices(): number {
     return this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM devices")?.n ?? 0;
   }
 
-  revokeDevice(id: string) {
-    this.db.run("DELETE FROM devices WHERE id = ?", id);
+  revokeDevice(id: string): boolean {
+    return this.db.run("DELETE FROM devices WHERE id = ?", id).changes > 0;
   }
 
   // ---- device E2EE public keys -----------------------------------------------
@@ -138,6 +169,10 @@ export class Store {
     return this.db
       .all<{ info: string | null }>("SELECT info FROM nodes WHERE info IS NOT NULL")
       .map((r) => NodeInfo.parse(JSON.parse(r.info!)));
+  }
+
+  deleteNode(id: string): boolean {
+    return this.db.run("DELETE FROM nodes WHERE id = ?", id).changes > 0;
   }
 
   // ---- tasks & runs ----------------------------------------------------------
@@ -223,5 +258,13 @@ export class Store {
 
   audit(actor: string, action: string, detail?: string) {
     this.db.run("INSERT INTO audit (ts, actor, action, detail) VALUES (?, ?, ?, ?)", Date.now(), actor, action, detail ?? null);
+  }
+
+  listAudit(limit = 100): Array<{ ts: number; actor: string; action: string; detail: string | null }> {
+    const n = Math.max(1, Math.min(500, Math.floor(limit)));
+    return this.db.all<{ ts: number; actor: string; action: string; detail: string | null }>(
+      "SELECT ts, actor, action, detail FROM audit ORDER BY ts DESC, rowid DESC LIMIT ?",
+      n,
+    );
   }
 }

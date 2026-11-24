@@ -114,5 +114,9 @@ describe("mobile e2eePure", () => {
     expect(sel.mismatchNodes.map((n) => n.id)).toEqual(["n2"]);
     expect(sel.untrustedNodes.map((n) => n.id)).toEqual(["n3"]);
     expect(sel.recipientKeys).toEqual([k1.publicKey, dev2.publicKey]);
+
+    const pinned = selectE2EERecipients(nodes, { id: "web", nodes: ["n1", "n2", "n3"] }, trust, [dev2.publicKey], "n3");
+    expect(pinned.trustedNodes).toEqual([]);
+    expect(pinned.untrustedNodes.map((n) => n.id)).toEqual(["n3"]);
   });
 });

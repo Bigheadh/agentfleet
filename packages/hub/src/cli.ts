@@ -10,7 +10,7 @@
 import { networkInterfaces, homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import type { PairingPayload } from "@agentfleet/proto";
+import { keyFingerprint, type PairingPayload } from "@agentfleet/proto";
 // @ts-expect-error - no types published
 import qrcode from "qrcode-terminal";
 import { openDb } from "./db.ts";
@@ -33,6 +33,8 @@ const { positionals, values } = parseArgs({
     "webhook-url": { type: "string", default: env.AGENTFLEET_WEBHOOK_URL || undefined },
     "no-expo-push": { type: "boolean", default: env.AGENTFLEET_EXPO_PUSH === "0" },
     "push-redact": { type: "boolean", default: env.AGENTFLEET_PUSH_REDACT === "1" },
+    limit: { type: "string", default: "50" },
+    json: { type: "boolean", default: false },
     version: { type: "boolean", short: "v" },
     help: { type: "boolean", short: "h" },
   },
@@ -50,8 +52,9 @@ if (values.help) {
   console.log(
     [
       `agentfleet-hub ${VERSION}`,
-      "usage: agentfleet-hub [start|pair|join-token] [--port N] [--data DIR] [--name NAME] [--public-url URL]",
+      "usage: agentfleet-hub [start|pair|join-token|devices|revoke <id>|audit] [--port N] [--data DIR] [--name NAME] [--public-url URL]",
       "  notifications: [--ntfy-url https://ntfy.sh/<topic>] [--webhook-url URL] [--no-expo-push] [--push-redact]",
+      "  audit: [--limit N] [--json]",
       "  env: AGENTFLEET_NTFY_URL, AGENTFLEET_NTFY_TOKEN, AGENTFLEET_WEBHOOK_URL, AGENTFLEET_EXPO_PUSH=0, AGENTFLEET_PUSH_REDACT=1",
     ].join("\n"),
   );
@@ -88,13 +91,53 @@ if (cmd === "start") {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
-} else if (cmd === "pair" || cmd === "join-token") {
+} else if (cmd === "pair" || cmd === "join-token" || cmd === "devices" || cmd === "revoke" || cmd === "audit") {
   const { mkdirSync } = await import("node:fs");
   mkdirSync(values.data!, { recursive: true });
   const db = await openDb(join(values.data!, "hub.db"));
   const store = new Store(db);
-  if (cmd === "pair") printPairing(store, values.name!);
-  else printJoin(store);
+  if (cmd === "pair") {
+    printPairing(store, values.name!);
+  } else if (cmd === "join-token") {
+    printJoin(store);
+  } else if (cmd === "devices") {
+    const list = store.listDevices();
+    if (values.json) {
+      console.log(JSON.stringify(list, null, 2));
+    } else if (list.length === 0) {
+      console.log("（尚未配对任何设备）");
+    } else {
+      for (const d of list) {
+        const fp = d.publicKey ? keyFingerprint(d.publicKey) : "-";
+        const seen = d.lastSeen ? new Date(d.lastSeen).toISOString() : "-";
+        console.log(`${d.id}\t${d.name}\tE2EE=${fp}\tpush=${d.hasPush ? "on" : "off"}\tseen=${seen}`);
+      }
+    }
+  } else if (cmd === "revoke") {
+    const id = positionals[1];
+    if (!id) {
+      console.error("usage: agentfleet-hub revoke <deviceId>");
+      db.close();
+      process.exit(1);
+    }
+    const ok = store.revokeDevice(id);
+    if (!ok) {
+      console.error(`未找到设备: ${id}`);
+      db.close();
+      process.exit(1);
+    }
+    store.audit("cli", "device.revoke", id);
+    console.log(`✓ 已吊销设备 ${id}`);
+  } else if (cmd === "audit") {
+    const rows = store.listAudit(Number(values.limit) || 50);
+    if (values.json) {
+      console.log(JSON.stringify(rows, null, 2));
+    } else {
+      for (const r of rows) {
+        console.log(`${new Date(r.ts).toISOString()}\t${r.actor}\t${r.action}\t${r.detail ?? ""}`);
+      }
+    }
+  }
   db.close();
 } else {
   console.error(`unknown command: ${cmd}`);

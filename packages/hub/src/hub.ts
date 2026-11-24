@@ -33,6 +33,8 @@ export interface NodeConn {
 export interface ClientConn {
   send(msg: HubToClient): void;
   subs: Set<string>;
+  deviceId?: string;
+  close?: (code?: number, reason?: string) => void;
 }
 
 export class HubError extends Error {
@@ -362,12 +364,36 @@ export class Hub {
       attempts: 0,
       note: null,
       ...(req.e2ee ? { e2ee: req.e2ee } : {}),
+      ...(req.groupId ? { groupId: req.groupId } : {}),
     };
     this.store.saveTask(task);
     this.store.audit(actor, "task.create", task.id);
     this.emit({ type: "task", task });
     this.schedule();
     return this.store.getTask(task.id)!;
+  }
+
+  revokeDevice(deviceId: string, actor: string) {
+    const removed = this.store.revokeDevice(deviceId);
+    if (!removed) throw new HubError(404, "device not found");
+    for (const c of [...this.clients]) {
+      if (c.deviceId === deviceId) {
+        c.close?.(4001, "device revoked");
+        this.clients.delete(c);
+      }
+    }
+    this.store.audit(actor, "device.revoke", deviceId);
+  }
+
+  removeNode(nodeId: string, actor: string) {
+    const entry = this.nodes.get(nodeId);
+    if (entry?.conn) throw new HubError(409, "节点当前在线，请先停止节点后再移除");
+    if (this.store.activeRunsOnNode(nodeId).length > 0) throw new HubError(409, "节点仍有运行中的任务");
+    if (entry?.graceTimer) clearTimeout(entry.graceTimer);
+    this.nodes.delete(nodeId);
+    const removed = this.store.deleteNode(nodeId);
+    if (!removed && !entry) throw new HubError(404, "node not found");
+    this.store.audit(actor, "node.remove", nodeId);
   }
 
   cancelTask(taskId: string, actor: string): Task {

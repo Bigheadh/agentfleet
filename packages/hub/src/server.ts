@@ -80,7 +80,23 @@ export function createHubServer(hub: Hub): Server {
     hub.store.audit(actor, expoPushToken ? "push.register" : "push.unregister");
     return { ok: true };
   });
+  route("GET", "/api/devices", "device", ({ actor }) => {
+    const me = deviceIdOf(actor);
+    return hub.store.listDevices().map((d) => ({ ...d, current: d.id === me }));
+  });
+  route("POST", "/api/devices/:id/revoke", "device", ({ params, actor }) => {
+    hub.revokeDevice(decodeURIComponent(params[0]!), actor);
+    return { ok: true };
+  });
+  route("GET", "/api/audit", "device", ({ url }) => {
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    return hub.store.listAudit(Number.isFinite(limit) ? limit : 100);
+  });
   route("GET", "/api/nodes", "device", () => hub.nodeInfos());
+  route("POST", "/api/nodes/:id/remove", "device", ({ params, actor }) => {
+    hub.removeNode(decodeURIComponent(params[0]!), actor);
+    return { ok: true };
+  });
   route("POST", "/api/nodes/join-token", "device", ({ actor }) => {
     const token = hub.store.createJoinToken();
     hub.store.audit(actor, "node.join-token");
@@ -137,6 +153,7 @@ export function createHubServer(hub: Hub): Server {
       if (match.r.auth === "device") {
         const device = hub.store.deviceByToken(bearer(req) ?? "");
         if (!device) throw new HubError(401, "unauthorized");
+        hub.store.touchDevice(device.id);
         actor = `device:${device.id}`;
       }
       const body = req.method === "POST" ? await readJson(req) : undefined;
@@ -163,7 +180,8 @@ export function createHubServer(hub: Hub): Server {
     } else if (url.pathname === "/ws/client") {
       const device = hub.store.deviceByToken(url.searchParams.get("token") ?? bearer(req) ?? "");
       if (!device) return rejectUpgrade(socket);
-      clientWss.handleUpgrade(req, socket, head, (ws) => attachClient(hub, ws));
+      hub.store.touchDevice(device.id);
+      clientWss.handleUpgrade(req, socket, head, (ws) => attachClient(hub, ws, device.id));
     } else {
       rejectUpgrade(socket, 404);
     }
@@ -202,10 +220,12 @@ function attachNode(hub: Hub, ws: WebSocket, nodeId: string) {
   });
 }
 
-function attachClient(hub: Hub, ws: WebSocket) {
+function attachClient(hub: Hub, ws: WebSocket, deviceId: string) {
   const conn: ClientConn = {
     subs: new Set(),
+    deviceId,
     send: (msg) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg)),
+    close: (code, reason) => ws.close(code, reason),
   };
   hub.addClient(conn);
   const alive = keepAlive(ws);

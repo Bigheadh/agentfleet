@@ -117,3 +117,94 @@ describe("Worktrees junk excludes (Gemini committed __pycache__/*.pyc)", () => {
     expect(await wts.commit(wt, "again")).toBe("没有需要提交的改动");
   });
 });
+
+describe("Policy danger invariant", () => {
+  it("never auto-allows danger even if defaults.danger is misconfigured as allow", async () => {
+    const { Policy, PolicyConfig } = await import("../src/policy.ts");
+    const policy = new Policy(PolicyConfig.parse({ defaults: { danger: "allow" } }));
+    const v = policy.evaluate({ risk: "exec", command: "sudo rm -rf /tmp/x" });
+    expect(v.risk).toBe("danger");
+    expect(v.decision).toBe("ask");
+  });
+});
+
+describe("Runner turn timeout watchdog", () => {
+  it("aborts a hung agent turn and frees the concurrency slot", async () => {
+    let interrupted = false;
+    let closed = false;
+    const adapter: AgentAdapter = {
+      id: "hung",
+      probe: async () => ({ id: "hung", agent: "hung", tier: "native", version: null, installed: true, loggedIn: null, models: [], supports: [] }),
+      start: async () => ({
+        prompt: () => new Promise(() => {}), // never resolves
+        interrupt: async () => {
+          interrupted = true;
+        },
+        close: async () => {
+          closed = true;
+        },
+      }),
+    };
+    const cfg = NodeConfig.parse({ hub: "http://127.0.0.1:1", nodeId: "n", token: "t", name: "n", workRoot: tempDir(), projects: { demo: { path: tempRepo() } } });
+    const sent: NodeToHub[] = [];
+    const runner = new Runner({
+      cfg,
+      adapters: new Map([["hung", adapter]]),
+      send: (m) => sent.push(m),
+      statePath: join(tempDir(), "s.json"),
+      turnTimeoutMs: 120,
+      log: () => {},
+    });
+    await runner.assign({ runId: "run-hung-1", taskId: "t", project: "demo", runtimeId: "hung", prompt: "go" });
+    const ended = await waitFor(() => sent.find((m) => m.type === "run.ended"), 5_000, "run.ended");
+    expect(ended.type === "run.ended" && ended.status).toBe("failed");
+    expect(ended.type === "run.ended" && ended.error).toContain("回合超时");
+    expect(interrupted).toBe(true);
+    expect(closed).toBe(true);
+    expect(runner.running).toBe(0);
+    await runner.shutdown();
+  });
+
+  it("pauses turn timeout while waiting for user approval", async () => {
+    const adapter: AgentAdapter = {
+      id: "appr-slow",
+      probe: async () => ({ id: "appr-slow", agent: "a", tier: "native", version: null, installed: true, loggedIn: null, models: [], supports: [] }),
+      start: async (_spec, ctx) => ({
+        prompt: async () => {
+          const picked = await ctx.requestApproval({
+            title: "write x",
+            risk: "write",
+            options: [{ id: "allow", label: "允许", kind: "allow_once" }],
+          });
+          return picked === "allow" ? { status: "completed" } : { status: "failed", error: "denied" };
+        },
+        interrupt: async () => {},
+        close: async () => {},
+      }),
+    };
+    const cfg = NodeConfig.parse({ hub: "http://127.0.0.1:1", nodeId: "n", token: "t", name: "n", workRoot: tempDir(), projects: { demo: { path: tempRepo() } } });
+    const sent: NodeToHub[] = [];
+    const runner = new Runner({
+      cfg,
+      adapters: new Map([["appr-slow", adapter]]),
+      send: (m) => sent.push(m),
+      statePath: join(tempDir(), "s.json"),
+      turnTimeoutMs: 180,
+      log: () => {},
+    });
+    await runner.assign({ runId: "run-pause-1", taskId: "t", project: "demo", runtimeId: "appr-slow", prompt: "go" });
+    const apprEv = await waitFor(
+      () => sent.find((m) => m.type === "run.event" && m.event.type === "approval.requested"),
+      5_000,
+      "approval.requested",
+    );
+    // Wait LONGER than turnTimeoutMs while human is deciding — must NOT time out.
+    await new Promise((r) => setTimeout(r, 320));
+    expect(sent.some((m) => m.type === "run.ended")).toBe(false);
+    const approvalId = apprEv.type === "run.event" && apprEv.event.type === "approval.requested" ? apprEv.event.approvalId : "";
+    runner.approval("run-pause-1", approvalId, "allow");
+    const ended = await waitFor(() => sent.find((m) => m.type === "run.ended"), 5_000, "run.ended");
+    expect(ended.type === "run.ended" && ended.status).toBe("completed");
+    await runner.shutdown();
+  });
+});

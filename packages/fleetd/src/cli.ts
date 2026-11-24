@@ -51,6 +51,7 @@ const USAGE = `agentfleet-node ${VERSION}
   agentfleet-node key            # 显示本节点 E2EE 公钥、指纹和校验二维码
   agentfleet-node trust add <PUBKEY> | trust list | trust remove <PUBKEY>
   agentfleet-node probe
+  agentfleet-node status         # 查看节点配置、E2EE 指纹和项目概览
   agentfleet-node policy
   agentfleet-node start
   全局参数: --config <path>  (默认 ${DEFAULT_CONFIG_PATH})`;
@@ -163,6 +164,17 @@ switch (cmd) {
       if (cfg.e2ee.trustedDevices.length === 0) console.log("（未限制发送方设备公钥；运行 `agentfleet-node trust add <PUBKEY>` 可开启白名单）");
       for (const k of cfg.e2ee.trustedDevices) console.log(`${keyFingerprint(k)}\t${k}`);
     }
+    break;
+  }
+
+  case "status": {
+    const cfg = loadConfig(configPath);
+    const kp = loadOrCreateIdentity(cfg.e2ee.keyPath ?? defaultIdentityPath(cfg.nodeId));
+    console.log(`节点: ${cfg.name} (${cfg.nodeId})`);
+    console.log(`Hub:  ${cfg.hub}`);
+    console.log(`并发: ${cfg.maxConcurrency}  回合超时: ${cfg.turnTimeoutMinutes}m  空闲保活: ${cfg.idleSessionMinutes}m`);
+    console.log(`E2EE: ${cfg.e2ee.mode === "required" ? "强制加密" : "自动支持"}  指纹: ${keyFingerprint(kp.publicKey)}  白名单设备: ${cfg.e2ee.trustedDevices.length}`);
+    console.log(`项目: ${Object.keys(cfg.projects).join(", ") || "（无）"}`);
     break;
   }
 

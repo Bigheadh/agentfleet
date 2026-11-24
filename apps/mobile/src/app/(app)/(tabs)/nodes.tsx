@@ -1,8 +1,10 @@
 import { keyFingerprint, type Capability, type NodeInfo } from "@agentfleet/proto";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import { Stack } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { FlatList, Modal, Platform, RefreshControl, StyleSheet, View } from "react-native";
 
+import { errorMessage } from "@/api/client";
 import { Badge, Button, Card, Dot, EmptyState, ErrorBanner, Loading, Row, Txt } from "@/components/ui";
 import { t } from "@/i18n/strings";
 import { alertMessage, confirmAsync } from "@/lib/dialog";
@@ -10,6 +12,7 @@ import { parseNodeTrustQr } from "@/lib/e2eePure";
 import { timeAgo } from "@/lib/format";
 import { useE2EE } from "@/state/e2ee";
 import { useFleet } from "@/state/fleet";
+import { usePaired } from "@/state/session";
 import { MONO, useColors, type Palette } from "@/theme";
 
 function loginLabel(rt: Capability): { label: string; color: (c: Palette) => string } {
@@ -43,7 +46,15 @@ function RuntimeRow({ rt }: { rt: Capability }) {
   );
 }
 
-function NodeCard({ node, onScan }: { node: NodeInfo; onScan: (node: NodeInfo) => void }) {
+function NodeCard({
+  node,
+  onScan,
+  onRemove,
+}: {
+  node: NodeInfo;
+  onScan: (node: NodeInfo) => void;
+  onRemove: (node: NodeInfo) => void;
+}) {
   const c = useColors();
   const { trustStatus, trustNode, untrustNode } = useE2EE();
   const status = trustStatus(node);
@@ -107,18 +118,20 @@ function NodeCard({ node, onScan }: { node: NodeInfo; onScan: (node: NodeInfo) =
             {t.e2ee.mismatchAlert}
           </Txt>
         ) : null}
-        {node.publicKey ? (
-          <Row style={{ marginTop: 8, flexWrap: "wrap" }} gap={8}>
-            {status !== "trusted" && Platform.OS !== "web" ? (
-              <Button title={t.e2ee.scanVerify} onPress={() => onScan(node)} />
-            ) : null}
-            {status !== "trusted" ? (
-              <Button title={t.e2ee.trustManual} variant="secondary" onPress={() => void onManualTrust()} />
-            ) : (
-              <Button title={t.e2ee.untrust} variant="secondary" onPress={() => void untrustNode(node.id)} />
-            )}
-          </Row>
-        ) : null}
+        <Row style={{ marginTop: 8, flexWrap: "wrap" }} gap={8}>
+          {node.publicKey && status !== "trusted" && Platform.OS !== "web" ? (
+            <Button small title={t.e2ee.scanVerify} onPress={() => onScan(node)} />
+          ) : null}
+          {node.publicKey && status !== "trusted" ? (
+            <Button small title={t.e2ee.trustManual} variant="secondary" onPress={() => void onManualTrust()} />
+          ) : null}
+          {node.publicKey && status === "trusted" ? (
+            <Button small title={t.e2ee.untrust} variant="secondary" onPress={() => void untrustNode(node.id)} />
+          ) : null}
+          {!node.online ? (
+            <Button small title={t.nodesExtra.removeNode} variant="danger" onPress={() => onRemove(node)} />
+          ) : null}
+        </Row>
       </View>
 
       <Txt muted size={12} weight="600" style={{ marginTop: 12 }}>
@@ -137,6 +150,7 @@ function NodeCard({ node, onScan }: { node: NodeInfo; onScan: (node: NodeInfo) =
 
 export default function NodesScreen() {
   const c = useColors();
+  const { client, session } = usePaired();
   const { nodes, refreshNodes } = useFleet();
   const { trustNode } = useE2EE();
   const [refreshing, setRefreshing] = useState(false);
@@ -144,11 +158,39 @@ export default function NodesScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const scannedRef = useRef(false);
 
+  const [joinModalOpen, setJoinModalOpen] = useState(false);
+  const [joinCmd, setJoinCmd] = useState<string | null>(null);
+  const [joinBusy, setJoinBusy] = useState(false);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await refreshNodes();
     setRefreshing(false);
   }, [refreshNodes]);
+
+  const generateJoinToken = useCallback(async () => {
+    setJoinModalOpen(true);
+    setJoinBusy(true);
+    try {
+      const res = await client.createJoinToken();
+      setJoinCmd(`agentfleet-node join ${session.hub} ${res.token}`);
+    } catch (e) {
+      setJoinModalOpen(false);
+      alertMessage(t.common.error, errorMessage(e));
+    } finally {
+      setJoinBusy(false);
+    }
+  }, [client, session.hub]);
+
+  const onRemoveNode = async (node: NodeInfo) => {
+    if (!(await confirmAsync(t.nodesExtra.removeNode, t.nodesExtra.removeConfirm(node.name), { destructive: true }))) return;
+    try {
+      await client.removeNode(node.id);
+      await refreshNodes();
+    } catch (e) {
+      alertMessage(t.common.error, errorMessage(e));
+    }
+  };
 
   const startScan = async (node: NodeInfo) => {
     if (!permission?.granted) {
@@ -181,16 +223,74 @@ export default function NodesScreen() {
   const sorted = nodes.data.slice().sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
   return (
     <>
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <Button
+              small
+              title={`＋ ${t.nodesExtra.addNode}`}
+              onPress={() => void generateJoinToken()}
+              style={{ marginRight: 12 }}
+            />
+          ),
+        }}
+      />
       <FlatList
         style={{ backgroundColor: c.bg }}
         data={sorted}
         keyExtractor={(n) => n.id}
-        renderItem={({ item }) => <NodeCard node={item} onScan={(n) => void startScan(n)} />}
+        renderItem={({ item }) => (
+          <NodeCard node={item} onScan={(n) => void startScan(n)} onRemove={(n) => void onRemoveNode(n)} />
+        )}
         contentContainerStyle={{ padding: 16, gap: 12, flexGrow: 1 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListHeaderComponent={nodes.error ? <ErrorBanner message={nodes.error} onRetry={onRefresh} /> : undefined}
-        ListEmptyComponent={nodes.error ? undefined : <EmptyState title={t.nodes.empty} hint={t.nodes.emptyHint} />}
+        ListEmptyComponent={
+          nodes.error ? undefined : (
+            <EmptyState title={t.nodes.empty} hint={t.nodes.emptyHint}>
+              <Button title={`＋ ${t.nodesExtra.addNode}`} onPress={() => void generateJoinToken()} style={{ marginTop: 16 }} />
+            </EmptyState>
+          )
+        }
       />
+
+      <Modal visible={joinModalOpen} animationType="slide" onRequestClose={() => setJoinModalOpen(false)}>
+        <View style={[styles.modal, { backgroundColor: c.bg }]}>
+          <Txt weight="700" size={18}>
+            {t.nodesExtra.joinTitle}
+          </Txt>
+          <Txt muted size={13} style={{ marginTop: 6 }}>
+            {t.nodesExtra.joinHint}
+          </Txt>
+          <Card style={{ marginTop: 12 }}>
+            {joinBusy ? (
+              <Loading />
+            ) : (
+              <Txt size={13} style={MONO} selectable>
+                {joinCmd ?? "-"}
+              </Txt>
+            )}
+          </Card>
+          <Txt muted size={12} style={{ marginTop: 14 }}>
+            {t.nodesExtra.joinInstallHint}
+          </Txt>
+          <Card style={{ marginTop: 6 }}>
+            <Txt size={12} style={MONO} selectable>
+              curl -fsSL https://raw.githubusercontent.com/Bigheadh/agentfleet/main/scripts/install.sh | sh
+            </Txt>
+          </Card>
+          <Row style={{ marginTop: 18 }}>
+            <Button
+              title={t.nodesExtra.regenerate}
+              variant="secondary"
+              loading={joinBusy}
+              onPress={() => void generateJoinToken()}
+              style={{ flex: 1 }}
+            />
+            <Button title={t.common.ok} onPress={() => setJoinModalOpen(false)} style={{ flex: 1 }} />
+          </Row>
+        </View>
+      </Modal>
 
       <Modal visible={!!scanTarget} animationType="slide" onRequestClose={() => setScanTarget(null)}>
         <View style={[styles.modal, { backgroundColor: c.bg }]}>

@@ -91,13 +91,16 @@ export function selectE2EERecipients(
   project: Project | null,
   trust: TrustMap,
   extraDeviceKeys: string[] = [],
+  pinnedNodeId?: string | null,
 ): {
   recipientKeys: string[];
   trustedNodes: NodeInfo[];
   untrustedNodes: NodeInfo[];
   mismatchNodes: NodeInfo[];
 } {
-  const projectNodes = project ? nodes.filter((n) => project.nodes.includes(n.id)) : nodes;
+  const projectNodes = (project ? nodes.filter((n) => project.nodes.includes(n.id)) : nodes).filter(
+    (n) => !pinnedNodeId || n.id === pinnedNodeId,
+  );
   const trustedNodes: NodeInfo[] = [];
   const untrustedNodes: NodeInfo[] = [];
   const mismatchNodes: NodeInfo[] = [];

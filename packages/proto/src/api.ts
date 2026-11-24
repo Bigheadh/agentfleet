@@ -36,6 +36,8 @@ export const CreateTaskRequest = z.object({
   constraints: TaskConstraints.partial().default({}),
   /** End-to-end encrypted task payload; when set, `title` and `prompt` hold placeholders. */
   e2ee: TaskE2EE.optional(),
+  /** Optional shared id linking parallel multi-agent comparison tasks. */
+  groupId: z.string().min(1).max(64).optional(),
 });
 export type CreateTaskRequest = z.input<typeof CreateTaskRequest>;
 
@@ -52,6 +54,29 @@ export const RunActionResponse = z.object({ ok: z.boolean(), output: z.string(),
 export type RunActionResponse = z.infer<typeof RunActionResponse>;
 
 export const JoinTokenResponse = z.object({ token: z.string(), command: z.string() });
+export type JoinTokenResponse = z.infer<typeof JoinTokenResponse>;
+
+// ---- devices & audit management ---------------------------------------------
+
+export const DeviceInfo = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.number(),
+  lastSeen: z.number().nullable(),
+  hasPush: z.boolean(),
+  publicKey: z.string().nullable(),
+  /** True for the calling device. */
+  current: z.boolean().optional(),
+});
+export type DeviceInfo = z.infer<typeof DeviceInfo>;
+
+export const AuditEntry = z.object({
+  ts: z.number(),
+  actor: z.string(),
+  action: z.string(),
+  detail: z.string().nullable(),
+});
+export type AuditEntry = z.infer<typeof AuditEntry>;
 
 // ---- push notifications & E2EE device keys ----------------------------------
 

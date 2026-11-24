@@ -51,6 +51,12 @@ interface PendingApproval {
   timer: NodeJS.Timeout;
 }
 
+interface TurnWatchdog {
+  pause(): void;
+  resume(): void;
+  stop(): void;
+}
+
 interface RunState {
   meta: RunMeta;
   session: AgentSession | null;
@@ -62,6 +68,7 @@ interface RunState {
   interruptRequested: boolean;
   approvals: Map<string, PendingApproval>;
   idleTimer: NodeJS.Timeout | null;
+  watchdog: TurnWatchdog | null;
 }
 
 type TextEvent = Extract<FleetEvent, { type: "message.delta" | "reasoning.delta" }>;
@@ -82,6 +89,8 @@ export interface RunnerOptions {
   statePath: string;
   /** Node's X25519 identity keypair for decrypting E2EE tasks. */
   identity?: KeyPair;
+  /** Override turn timeout in ms (defaults to cfg.turnTimeoutMinutes * 60_000). */
+  turnTimeoutMs?: number;
   log?: (level: "debug" | "info" | "warn" | "error", text: string) => void;
 }
 
@@ -303,6 +312,7 @@ export class Runner {
       interruptRequested: false,
       approvals: new Map(),
       idleTimer: null,
+      watchdog: null,
     };
   }
 
@@ -360,10 +370,13 @@ export class Runner {
         if (st.interruptRequested) result = { status: "interrupted" };
         else {
           this.emit(st, { type: "run.status", status: "running" });
-          result = await session.prompt(text);
+          result = await this.runTurnWithTimeout(st, session, text);
         }
       } catch (err) {
         result = { status: "failed", error: (err as Error).message };
+      } finally {
+        st.watchdog?.stop();
+        st.watchdog = null;
       }
       if (st.interruptRequested && result.status === "completed") result = { status: "interrupted" };
       this.cancelApprovals(st);
@@ -374,6 +387,82 @@ export class Runner {
       this.endPeriod(st, result.status, result.error ?? null);
       return;
     }
+  }
+
+  private runTurnWithTimeout(st: RunState, session: AgentSession, text: string): Promise<TurnResult> {
+    const timeoutMs = this.opts.turnTimeoutMs ?? this.opts.cfg.turnTimeoutMinutes * 60_000;
+    let remaining = timeoutMs;
+    let startedAt = 0;
+    let timer: NodeJS.Timeout | null = null;
+    let settled = false;
+    let timedOut = false;
+
+    return new Promise<TurnResult>((resolve, reject) => {
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer), (timer = null);
+        st.watchdog = null;
+        fn();
+      };
+
+      const onTimeout = () => {
+        if (settled) return;
+        timedOut = true;
+        const label =
+          timeoutMs >= 60_000 ? `${Math.round(timeoutMs / 60_000)} 分钟` : `${Math.round(timeoutMs / 1000)} 秒`;
+        const errMsg = `回合超时（超过 ${label} 未完成）`;
+        this.log("warn", `run ${st.meta.spec.runId} ${errMsg}`);
+        this.emit(st, { type: "log", level: "error", text: `${errMsg}，正在中断 agent` });
+        this.cancelApprovals(st);
+        void session.interrupt().catch(() => {});
+        // Force-close if the agent ignores interrupt (e.g. hung HTTP retry loop).
+        const grace = Math.min(5_000, Math.max(200, Math.floor(timeoutMs / 2)));
+        const killTimer = setTimeout(() => {
+          void this.closeSession(st);
+          finish(() => resolve({ status: "failed", error: errMsg }));
+        }, grace);
+        killTimer.unref?.();
+      };
+
+      const startTimer = () => {
+        if (settled || timer) return;
+        startedAt = Date.now();
+        timer = setTimeout(onTimeout, Math.max(10, remaining));
+        timer.unref?.();
+      };
+
+      st.watchdog = {
+        pause() {
+          if (!timer) return;
+          clearTimeout(timer);
+          timer = null;
+          remaining = Math.max(0, remaining - (Date.now() - startedAt));
+        },
+        resume() {
+          if (!settled) startTimer();
+        },
+        stop() {
+          if (timer) clearTimeout(timer), (timer = null);
+        },
+      };
+
+      startTimer();
+      session.prompt(text).then(
+        (res) =>
+          finish(() =>
+            resolve(
+              timedOut
+                ? {
+                    status: "failed",
+                    error: `回合超时（超过 ${timeoutMs >= 60_000 ? `${Math.round(timeoutMs / 60_000)} 分钟` : `${Math.round(timeoutMs / 1000)} 秒`} 未完成）`,
+                  }
+                : res,
+            ),
+          ),
+        (err) => finish(() => reject(err)),
+      );
+    });
   }
 
   private endPeriod(st: RunState, status: RunStatus, error: string | null) {
@@ -395,6 +484,8 @@ export class Runner {
 
   private async closeSession(st: RunState) {
     if (st.idleTimer) clearTimeout(st.idleTimer), (st.idleTimer = null);
+    st.watchdog?.stop();
+    st.watchdog = null;
     this.cancelApprovals(st);
     const s = st.session;
     st.session = null;
@@ -428,10 +519,12 @@ export class Runner {
     }
 
     this.emit(st, { type: "run.status", status: "waiting_approval", detail: req.title });
+    st.watchdog?.pause();
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         st.approvals.delete(approvalId);
         this.emit(st, { type: "approval.resolved", approvalId, optionId: null, by: "cancelled" });
+        if (st.approvals.size === 0) st.watchdog?.resume();
         resolve(null);
       }, this.opts.cfg.policy.approvalTimeoutMinutes * 60_000);
       timer.unref?.();
@@ -439,7 +532,10 @@ export class Runner {
         options: req.options,
         timer,
         resolve: (id) => {
-          if (st.approvals.size === 0 && !st.ended) this.emit(st, { type: "run.status", status: "running" });
+          if (st.approvals.size === 0) {
+            st.watchdog?.resume();
+            if (!st.ended) this.emit(st, { type: "run.status", status: "running" });
+          }
           resolve(id);
         },
       });

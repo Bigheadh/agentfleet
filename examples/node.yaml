@@ -7,6 +7,7 @@ labels: [mac, gpu]
 maxConcurrency: 2
 workRoot: ~/.agentfleet/worktrees
 idleSessionMinutes: 30
+turnTimeoutMinutes: 30
 
 projects:
   web:
